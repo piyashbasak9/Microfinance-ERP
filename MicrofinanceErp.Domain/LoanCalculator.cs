@@ -23,19 +23,31 @@ public static class LoanCalculator
         int installments,
         int installmentsPerYear = 12)
     {
-        if (principal <= 0m)
-        {
-            throw new ArgumentOutOfRangeException(nameof(principal), "Principal must be greater than zero.");
-        }
+        ValidateInputs(principal, annualRate, installments, installmentsPerYear);
 
-        if (installments <= 0)
+        if (annualRate == 0m)
         {
-            throw new ArgumentOutOfRangeException(nameof(installments), "Installments must be greater than zero.");
-        }
+            var zeroRatePrincipalPart = RoundMoney(principal / installments);
+            var zeroRateSchedule = new List<LoanScheduleEntry>();
+            var zeroRateRemainingPrincipal = principal;
 
-        if (installmentsPerYear <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(installmentsPerYear), "Installments per year must be greater than zero.");
+            for (var index = 1; index <= installments; index++)
+            {
+                var principalPaid = index == installments ? zeroRateRemainingPrincipal : zeroRatePrincipalPart;
+                var interestPaid = 0m;
+                var total = RoundMoney(principalPaid + interestPaid);
+                zeroRateRemainingPrincipal = RoundMoney(zeroRateRemainingPrincipal - principalPaid);
+                zeroRateSchedule.Add(new LoanScheduleEntry(principalPaid, interestPaid, total, zeroRateRemainingPrincipal));
+            }
+
+            return new LoanCalculationResult(
+                principal,
+                0m,
+                principal,
+                zeroRatePrincipalPart,
+                zeroRatePrincipalPart,
+                0m,
+                zeroRateSchedule);
         }
 
         var totalInterest = RoundMoney(principal * annualRate * (installments / (decimal)installmentsPerYear));
@@ -71,19 +83,32 @@ public static class LoanCalculator
         int installments,
         int installmentsPerYear = 12)
     {
-        if (principal <= 0m)
-        {
-            throw new ArgumentOutOfRangeException(nameof(principal), "Principal must be greater than zero.");
-        }
+        ValidateInputs(principal, annualRate, installments, installmentsPerYear);
 
-        if (installments <= 0)
+        if (annualRate == 0m)
         {
-            throw new ArgumentOutOfRangeException(nameof(installments), "Installments must be greater than zero.");
-        }
+            var zeroRatePrincipalPart = RoundMoney(principal / installments);
+            var zeroRateInstallment = zeroRatePrincipalPart;
+            var zeroRateBalance = principal;
+            var zeroRateSchedule = new List<LoanScheduleEntry>();
 
-        if (installmentsPerYear <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(installmentsPerYear), "Installments per year must be greater than zero.");
+            for (var index = 1; index <= installments; index++)
+            {
+                var principalPaid = index == installments ? zeroRateBalance : zeroRatePrincipalPart;
+                var interest = 0m;
+                var total = RoundMoney(principalPaid + interest);
+                zeroRateBalance = RoundMoney(zeroRateBalance - principalPaid);
+                zeroRateSchedule.Add(new LoanScheduleEntry(principalPaid, interest, total, zeroRateBalance));
+            }
+
+            return new LoanCalculationResult(
+                principal,
+                0m,
+                principal,
+                zeroRateInstallment,
+                zeroRatePrincipalPart,
+                0m,
+                zeroRateSchedule);
         }
 
         var ratePerPeriod = annualRate / installmentsPerYear;
@@ -119,6 +144,29 @@ public static class LoanCalculator
             RoundMoney(principal / installments),
             RoundMoney(totalInterest / installments),
             schedule);
+    }
+
+    private static void ValidateInputs(decimal principal, decimal annualRate, int installments, int installmentsPerYear)
+    {
+        if (principal <= 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(principal), "Principal must be greater than zero.");
+        }
+
+        if (annualRate < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(annualRate), "Annual rate must be zero or greater.");
+        }
+
+        if (installments <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(installments), "Installments must be greater than zero.");
+        }
+
+        if (installmentsPerYear <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(installmentsPerYear), "Installments per year must be greater than zero.");
+        }
     }
 
     private static decimal RoundMoney(decimal value)

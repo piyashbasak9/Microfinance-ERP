@@ -4,12 +4,12 @@
 
 | | |
 |---|---|
-| **Status** | Early development; authentication foundation in progress |
+| **Status** | Early development; core workflows are being implemented, not production-ready |
 | **Backend** | ASP.NET Core Web API (C#) |
 | **Frontend** | React + TypeScript SPA |
-| **Database** | SQL Server (PostgreSQL possible via EF Core provider) |
+| **Database** | PostgreSQL via EF Core and Npgsql |
 | **Theme** | White and dark blue |
-| **Last updated** | 2026-10-14 |
+| **Last updated** | 2026-10-17 |
 
 > **Placeholders to replace:** project name, repository URL, license, maintainers and contact details are marked with `TODO`.
 
@@ -27,6 +27,22 @@ The API requires a JWT signing secret and can create its first administrator at 
 The bootstrap account is created only when its normalized email does not already exist. Login lockout starts after five failed attempts and lasts 15 minutes. Development client requests use the Vite `/api` proxy; set `VITE_API_PROXY_TARGET` when the API is not listening at `http://localhost:5143`. Access tokens are kept in memory and expire after 15 minutes.
 
 For Docker Compose, also set `POSTGRES_PASSWORD` and `JWT_SIGNING_KEY` in the shell before starting the stack. Compose fails fast if either is missing; keep both out of source control.
+
+### Implementation status (2026-10-17)
+
+The README describes the intended version-1 system; it is not a claim that every listed feature is already implemented. The repository currently has initial authentication, member and loan API slices, and the savings account/transaction slice. Savings endpoints persist deposits and withdrawals, enforce minimum balances and member/account status rules, serialize balance changes, and require idempotency keys. Accounting posting is not yet wired to these transactions.
+
+**Remaining work before production:**
+
+- Complete authentication lifecycle: refresh/revocation, password reset/change, user and role administration, database-backed page/action permissions, and rate limiting.
+- Implement branch hierarchy, authorized branch scoping, centers, groups, staff/field officers, and member profiles with KYC, document/photo storage, status history, paging, and audit.
+- Complete savings products, account lifecycle, statements, reversal transactions, interest calculation/posting, maker-checker approval, and automatic balanced ledger entries.
+- Replace the preliminary loan create endpoint with product-based applications, eligibility, approval workflow, disbursement, persisted schedules, repayments/allocation, overdue/PAR, settlement, rescheduling, write-off, and accounting postings.
+- Replace collection mock data with generated sheets, item-level collection, submission, cash reconciliation, idempotent posting, reversals, and ledger integration.
+- Implement a chart of accounts, fiscal periods, immutable journal entries, double-entry validation, voucher numbering, reconciliation, and real financial statements.
+- Replace mock dashboard, report, audit, and settings data with persisted, branch-scoped data; add exports and compliance/audit trails.
+- Finish the frontend route/permission model, modal workflows, accessible feedback, responsive data tables, and the remaining module screens.
+- Add API integration and end-to-end tests for financial posting, idempotency, concurrency, authorization, and branch isolation; configure CI, dependency scanning, production migrations, structured logging/monitoring, backups, deployment, and recovery procedures.
 
 ---
 
@@ -405,6 +421,8 @@ Each module lists its features, key rules, and main screens. All create and edit
 - Withdrawals above a configurable amount need approval (maker-checker).
 - Posted transactions are never edited or deleted. A mistake is corrected with a **reversal** transaction that references the original.
 - Interest method and posting frequency are set per product (see [section 8.2](#82-savings-interest)).
+
+**Implemented API slice:** `GET/POST /api/v1/savings/accounts`, `GET /api/v1/savings/accounts/{id}/transactions`, and `POST /api/v1/savings/accounts/{id}/transactions` support individual account opening and deposit/withdrawal recording. Transaction posts require an `Idempotency-Key`, lock the account row while validating/updating its balance, and preserve an immutable transaction record. Product configuration, transaction reversals, approval and general-ledger posting are not implemented yet.
 
 **Screens**: `/savings/products`, `/savings/accounts`, `/savings/transactions`
 

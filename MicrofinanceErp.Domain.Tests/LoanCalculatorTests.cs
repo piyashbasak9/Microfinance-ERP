@@ -41,4 +41,44 @@ public class LoanCalculatorTests
         schedule.Schedule.First().Interest.Should().BeApproximately(1000m, 0.05m);
         schedule.Schedule.First().Principal.Should().BeApproximately(3727.98m, 0.05m);
     }
+
+    [Fact]
+    public void FlatRateSchedule_WithZeroRate_ShouldProduceNoInterest()
+    {
+        var schedule = LoanCalculator.CalculateFlatSchedule(1000m, 0m, 4, 12);
+
+        schedule.TotalInterest.Should().Be(0m);
+        schedule.TotalRepayable.Should().Be(1000m);
+        schedule.Installment.Should().Be(250m);
+        schedule.Schedule.Should().OnlyContain(entry => entry.Interest == 0m);
+        schedule.Schedule.Sum(entry => entry.Total).Should().Be(1000m);
+    }
+
+    [Fact]
+    public void DecliningBalanceSchedule_WithZeroRate_ShouldProduceEqualPrincipalInstallments()
+    {
+        var schedule = LoanCalculator.CalculateDecliningBalanceSchedule(1000m, 0m, 4, 12);
+
+        schedule.TotalInterest.Should().Be(0m);
+        schedule.TotalRepayable.Should().Be(1000m);
+        schedule.Installment.Should().Be(250m);
+        schedule.Schedule.Should().OnlyContain(entry => entry.Interest == 0m);
+        schedule.Schedule.Last().Balance.Should().Be(0m);
+    }
+
+    [Fact]
+    public void CalculateFlatSchedule_WithNegativeAnnualRate_ShouldThrow()
+    {
+        var act = () => LoanCalculator.CalculateFlatSchedule(1000m, -0.01m, 12, 12);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void CalculateDecliningBalanceSchedule_WithNegativeAnnualRate_ShouldThrow()
+    {
+        var act = () => LoanCalculator.CalculateDecliningBalanceSchedule(1000m, -0.01m, 12, 12);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
 }

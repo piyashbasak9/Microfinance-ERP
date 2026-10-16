@@ -13,6 +13,7 @@ public class MicrofinanceErpDbContext : DbContext
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<Member> Members => Set<Member>();
     public DbSet<SavingsAccount> SavingsAccounts => Set<SavingsAccount>();
+    public DbSet<SavingsTransaction> SavingsTransactions => Set<SavingsTransaction>();
     public DbSet<Loan> Loans => Set<Loan>();
     public DbSet<StaffUser> StaffUsers => Set<StaffUser>();
 
@@ -54,11 +55,34 @@ public class MicrofinanceErpDbContext : DbContext
             entity.Property(e => e.ProductName).IsRequired().HasMaxLength(120);
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
             entity.Property(e => e.Status).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.Balance).HasPrecision(18, 2);
+            entity.Property(e => e.MinimumBalance).HasPrecision(18, 2);
             entity.HasIndex(e => e.AccountNumber).IsUnique();
             entity.HasOne(e => e.Member)
                 .WithMany(m => m.SavingsAccounts)
                 .HasForeignKey(e => e.MemberId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SavingsTransaction>(entity =>
+        {
+            entity.ToTable("SavingsTransactions", table =>
+            {
+                table.HasCheckConstraint("CK_SavingsTransactions_Amount", "\"Amount\" > 0");
+                table.HasCheckConstraint("CK_SavingsTransactions_Balances", "\"BalanceBefore\" >= 0 AND \"BalanceAfter\" >= 0");
+            });
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Type).IsRequired().HasMaxLength(20);
+            entity.Property(e => e.Amount).HasPrecision(18, 2);
+            entity.Property(e => e.BalanceBefore).HasPrecision(18, 2);
+            entity.Property(e => e.BalanceAfter).HasPrecision(18, 2);
+            entity.Property(e => e.IdempotencyKey).IsRequired().HasMaxLength(100);
+            entity.HasIndex(e => new { e.SavingsAccountId, e.IdempotencyKey }).IsUnique();
+            entity.HasIndex(e => new { e.SavingsAccountId, e.CreatedAt });
+            entity.HasOne(e => e.SavingsAccount)
+                .WithMany(account => account.Transactions)
+                .HasForeignKey(e => e.SavingsAccountId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Loan>(entity =>

@@ -175,7 +175,8 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         .HasColumnType("character varying(50)");
 
                     b.Property<decimal>("Balance")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -187,6 +188,10 @@ namespace MicrofinanceErp.Infrastructure.Migrations
 
                     b.Property<int>("MemberId")
                         .HasColumnType("integer");
+
+                    b.Property<decimal>("MinimumBalance")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("ProductName")
                         .IsRequired()
@@ -209,6 +214,60 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                     b.HasIndex("MemberId");
 
                     b.ToTable("SavingsAccounts", (string)null);
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.SavingsTransaction", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("BalanceAfter")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("BalanceBefore")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("SavingsAccountId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SavingsAccountId", "CreatedAt");
+
+                    b.HasIndex("SavingsAccountId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.ToTable("SavingsTransactions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SavingsTransactions_Amount", "\"Amount\" > 0");
+
+                            t.HasCheckConstraint("CK_SavingsTransactions_Balances", "\"BalanceBefore\" >= 0 AND \"BalanceAfter\" >= 0");
+                        });
                 });
 
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.StaffUser", b =>
@@ -304,6 +363,17 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                     b.Navigation("Member");
                 });
 
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.SavingsTransaction", b =>
+                {
+                    b.HasOne("MicrofinanceErp.Domain.Entities.SavingsAccount", "SavingsAccount")
+                        .WithMany("Transactions")
+                        .HasForeignKey("SavingsAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("SavingsAccount");
+                });
+
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.StaffUser", b =>
                 {
                     b.HasOne("MicrofinanceErp.Domain.Entities.Branch", null)
@@ -322,6 +392,11 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                     b.Navigation("Loans");
 
                     b.Navigation("SavingsAccounts");
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.SavingsAccount", b =>
+                {
+                    b.Navigation("Transactions");
                 });
 #pragma warning restore 612, 618
         }
