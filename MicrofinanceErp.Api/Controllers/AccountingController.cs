@@ -1,5 +1,10 @@
 using MicrofinanceErp.Api.Models;
+using MicrofinanceErp.Api.Security;
+using MicrofinanceErp.Domain.Security;
+using MicrofinanceErp.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace MicrofinanceErp.Api.Controllers;
 
@@ -7,17 +12,55 @@ namespace MicrofinanceErp.Api.Controllers;
 [Route("api/v1")]
 public class AccountingController : ControllerBase
 {
-    [HttpGet("accounting/trial-balance")]
-    public ActionResult<ApiEnvelope<object>> GetTrialBalance()
-    {
-        var entries = new[]
-        {
-            new { account = "Cash in Hand", debit = 845000m, credit = 0m },
-            new { account = "Loans to Members", debit = 3182000m, credit = 0m },
-            new { account = "Member Savings", debit = 0m, credit = 4890000m },
-            new { account = "Interest Income on Loans", debit = 0m, credit = 125000m }
-        };
+    private readonly MicrofinanceErpDbContext _dbContext;
 
-        return Ok(new ApiEnvelope<object>(true, "Trial balance loaded.", entries, null, HttpContext.TraceIdentifier));
+    public AccountingController(MicrofinanceErpDbContext dbContext)
+    {
+        _dbContext = dbContext;
+    }
+
+    [HttpGet("accounting/trial-balance")]
+    [RequirePermission(AccessControlCatalog.AccountingRead)]
+    public async Task<ActionResult<ApiEnvelope<object>>> GetTrialBalance(CancellationToken cancellationToken)
+    {
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
+        var query = _dbContext.JournalLines.AsNoTracking();
+        if (branchId.HasValue)
+        {
+            query = query.Where(line => line.JournalEntry.BranchId == branchId.Value);
+        }
+
+        var accounts = await query
+            .GroupBy(line => new
+            {
+                line.ChartOfAccountId,
+                line.Account.Code,
+                line.Account.Name,
+                line.Account.AccountType
+            })
+            .Select(group => new
+            {
+                id = group.Key.ChartOfAccountId,
+                code = group.Key.Code,
+                account = group.Key.Name,
+                accountType = group.Key.AccountType,
+                debit = group.Sum(line => line.Debit),
+                credit = group.Sum(line => line.Credit)
+            })
+            .OrderBy(account => account.code)
+            .ToListAsync(cancellationToken);
+
+        var result = new
+        {
+            accounts,
+            totalDebits = accounts.Sum(account => account.debit),
+            totalCredits = accounts.Sum(account => account.credit),
+            isBalanced = accounts.Sum(account => account.debit) == accounts.Sum(account => account.credit)
+        };
+        return Ok(new ApiEnvelope<object>(true, "Trial balance loaded.", result, null, HttpContext.TraceIdentifier));
     }
 }

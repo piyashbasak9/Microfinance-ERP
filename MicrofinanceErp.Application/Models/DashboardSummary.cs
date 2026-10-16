@@ -6,30 +6,13 @@ public sealed record DashboardSummary(
     decimal ActiveMembers,
     decimal SavingsBalance,
     decimal OutstandingLoans,
-    decimal TodayCollections,
-    decimal OverdueAmount,
-    decimal PortfolioAtRisk,
-    IReadOnlyList<MetricCard> Metrics);
+    decimal? TodayCollections,
+    decimal? OverdueAmount,
+    decimal? PortfolioAtRisk,
+    IReadOnlyList<MetricCard> Metrics,
+    IReadOnlyList<DashboardMember> RecentMembers,
+    IReadOnlyList<DashboardLoan> RecentLoans);
 
-public static class DashboardService
-{
-    public static DashboardSummary GetSummary()
-    {
-        var metrics = new[]
-        {
-            new MetricCard("Active Members", 1284m, "+8.4%", "positive"),
-            new MetricCard("Savings Balance", 4890000m, "+5.2%", "positive"),
-            new MetricCard("Outstanding Loans", 3182000m, "+1.9%", "positive"),
-            new MetricCard("PAR 30", 7.4m, "-0.6%", "neutral")
-        };
+public sealed record DashboardMember(int Id, string Name, string Status, string Branch);
 
-        return new DashboardSummary(
-            ActiveMembers: 1284m,
-            SavingsBalance: 4890000m,
-            OutstandingLoans: 3182000m,
-            TodayCollections: 245000m,
-            OverdueAmount: 89000m,
-            PortfolioAtRisk: 7.4m,
-            Metrics: metrics);
-    }
-}
+public sealed record DashboardLoan(int Id, string Member, string Product, decimal Outstanding, string Status);

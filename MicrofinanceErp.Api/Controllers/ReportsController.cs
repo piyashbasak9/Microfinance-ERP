@@ -1,4 +1,6 @@
 using MicrofinanceErp.Api.Models;
+using MicrofinanceErp.Api.Security;
+using MicrofinanceErp.Domain.Security;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MicrofinanceErp.Api.Controllers;
@@ -8,6 +10,7 @@ namespace MicrofinanceErp.Api.Controllers;
 public class ReportsController : ControllerBase
 {
     [HttpGet("reports/financial")]
+    [RequirePermission(AccessControlCatalog.ReportsRead)]
     public ActionResult<ApiEnvelope<object>> GetFinancialReports()
     {
         var reports = new[]

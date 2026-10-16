@@ -263,6 +263,139 @@
   font-size: 15px;
 }
 
+.text-button {
+  margin-top: 14px;
+  border: 0;
+  background: transparent;
+  color: #0b2a5b;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-section {
+  margin-top: 22px;
+}
+
+.admin-section h3 {
+  margin-bottom: 12px;
+  color: #0b2a5b;
+}
+
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid #dfe8f7;
+  border-radius: 12px;
+  background: #f8fbff;
+  margin-bottom: 20px;
+}
+
+.admin-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #1a2433;
+  font-weight: 600;
+}
+
+.admin-form input:not([type="checkbox"]),
+.admin-form select,
+.admin-form-grid select {
+  min-width: 0;
+  border: 1px solid #d7dfef;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.admin-form .checkbox-label,
+.permission-option {
+  flex-direction: row;
+  align-items: center;
+}
+
+.secondary-button {
+  border: 1px solid #c7d2e4 !important;
+  background: #ffffff !important;
+  color: #0b2a5b !important;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table-wrap th,
+.table-wrap td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #edf1f6;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table-wrap th {
+  background: #e8eef8;
+  color: #0b2a5b;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.role-select-grid {
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.role-select-grid p {
+  margin: 0;
+}
+
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.permission-option {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #dfe8f7;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.permission-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.permission-option small {
+  color: #586779;
+  font-weight: 400;
+}
+
+.error-state {
+  color: #b42318;
+}
+
+.success-state {
+  color: #166534;
+}
+
 .page-card {
   margin-top: 24px;
 }
@@ -498,6 +631,47 @@
   color: #0b2a5b;
 }
 
+.password-change-section {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid #edf1f6;
+}
+
+.password-change-section h3 {
+  margin: 0;
+  color: #0b2a5b;
+}
+
+.password-change-section p {
+  color: #586779;
+}
+
+.password-change-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.password-change-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 600;
+  color: #1a2433;
+}
+
+.password-change-form input {
+  border: 1px solid #d7dfef;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.password-change-form .empty-state,
+.password-change-form .form-actions {
+  grid-column: 1 / -1;
+}
+
 @media (max-width: 960px) {
 
   .app-shell {
@@ -516,7 +690,10 @@
 
   .member-form-grid,
   .loan-form-grid,
-  .savings-form-grid {
+  .savings-form-grid,
+  .admin-form-grid,
+  .permission-grid,
+  .password-change-form {
     grid-template-columns: 1fr;
   }
 

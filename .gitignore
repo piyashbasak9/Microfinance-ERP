@@ -13,6 +13,7 @@ client/node_modules/
 # Local configuration and secrets
 **/appsettings.Local.json
 **/appsettings.*.Local.json
+**/secrets.json
 .env
 .env.*
 !.env.example

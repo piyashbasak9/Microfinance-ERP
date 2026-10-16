@@ -1,4 +1,6 @@
 using MicrofinanceErp.Api.Models;
+using MicrofinanceErp.Api.Security;
+using MicrofinanceErp.Domain.Security;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MicrofinanceErp.Api.Controllers;
@@ -8,6 +10,7 @@ namespace MicrofinanceErp.Api.Controllers;
 public class SettingsController : ControllerBase
 {
     [HttpGet("settings/system")]
+    [RequirePermission(AccessControlCatalog.SettingsRead)]
     public ActionResult<ApiEnvelope<object>> GetSystemSettings()
     {
         var settings = new
@@ -16,7 +19,7 @@ public class SettingsController : ControllerBase
             currency = "BDT",
             timezone = "Asia/Dhaka",
             defaultBranch = "Dhaka Main",
-            passwordPolicy = "8+ chars, 1 uppercase, 1 number",
+            passwordPolicy = "At least 12 characters with uppercase, lowercase, number, and symbol",
             sessionTimeoutMinutes = 15
         };
 

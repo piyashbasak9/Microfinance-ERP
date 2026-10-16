@@ -1,5 +1,10 @@
 using MicrofinanceErp.Api.Models;
+using MicrofinanceErp.Api.Security;
+using MicrofinanceErp.Domain.Security;
+using MicrofinanceErp.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace MicrofinanceErp.Api.Controllers;
 
@@ -7,16 +12,43 @@ namespace MicrofinanceErp.Api.Controllers;
 [Route("api/v1")]
 public class AuditController : ControllerBase
 {
-    [HttpGet("audit/logs")]
-    public ActionResult<ApiEnvelope<object>> GetAuditLogs()
+    private readonly MicrofinanceErpDbContext _dbContext;
+
+    public AuditController(MicrofinanceErpDbContext dbContext)
     {
-        var entries = new[]
+        _dbContext = dbContext;
+    }
+
+    [HttpGet("audit/logs")]
+    [RequirePermission(AccessControlCatalog.AuditRead)]
+    public async Task<ActionResult<ApiEnvelope<object>>> GetAuditLogs(CancellationToken cancellationToken)
+    {
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
         {
-            new { id = 1, actor = "System", action = "Bootstrap admin created", module = "Authentication", time = DateTime.UtcNow.AddHours(-3), outcome = "Success" },
-            new { id = 2, actor = "Ayesha Karim", action = "Approved loan", module = "Loans", time = DateTime.UtcNow.AddHours(-5), outcome = "Success" },
-            new { id = 3, actor = "Nabil Rahman", action = "Reconciled collection sheet", module = "Collections", time = DateTime.UtcNow.AddHours(-8), outcome = "Success" },
-            new { id = 4, actor = "Rafi Islam", action = "Updated settings", module = "Settings", time = DateTime.UtcNow.AddHours(-12), outcome = "Success" }
-        };
+            return Forbid();
+        }
+
+        var query = _dbContext.AuditLogs.AsNoTracking();
+        if (branchId.HasValue)
+        {
+            query = query.Where(log => log.BranchId == branchId.Value);
+        }
+
+        var entries = await query
+            .OrderByDescending(log => log.CreatedAt)
+            .ThenByDescending(log => log.Id)
+            .Take(200)
+            .Select(log => new
+            {
+                id = log.Id,
+                actor = log.ActorName,
+                action = log.Action,
+                module = log.EntityType,
+                time = log.CreatedAt,
+                outcome = log.Outcome,
+                entityId = log.EntityId
+            })
+            .ToListAsync(cancellationToken);
 
         return Ok(new ApiEnvelope<object>(true, "Audit log loaded.", entries, null, HttpContext.TraceIdentifier));
     }

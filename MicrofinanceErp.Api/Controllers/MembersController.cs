@@ -1,7 +1,10 @@
 using System.ComponentModel.DataAnnotations;
 using MicrofinanceErp.Api.Models;
+using MicrofinanceErp.Api.Security;
 using MicrofinanceErp.Domain.Entities;
+using MicrofinanceErp.Domain.Security;
 using MicrofinanceErp.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,10 +22,21 @@ public class MembersController : ControllerBase
     }
 
     [HttpGet("members")]
+    [RequirePermission(AccessControlCatalog.MembersRead)]
     public async Task<ActionResult<ApiEnvelope<object>>> GetMembers(CancellationToken cancellationToken)
     {
-        var members = await _dbContext.Members
-            .AsNoTracking()
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
+        var query = _dbContext.Members.AsNoTracking();
+        if (branchId.HasValue)
+        {
+            query = query.Where(member => member.BranchId == branchId.Value);
+        }
+
+        var members = await query
             .OrderBy(member => member.Id)
             .Select(member => new
             {
@@ -45,10 +59,21 @@ public class MembersController : ControllerBase
     }
 
     [HttpGet("members/{memberId:int}")]
+    [RequirePermission(AccessControlCatalog.MembersRead)]
     public async Task<ActionResult<ApiEnvelope<object>>> GetMember(int memberId, CancellationToken cancellationToken)
     {
-        var member = await _dbContext.Members
-            .AsNoTracking()
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
+        var query = _dbContext.Members.AsNoTracking();
+        if (branchId.HasValue)
+        {
+            query = query.Where(item => item.BranchId == branchId.Value);
+        }
+
+        var member = await query
             .Where(item => item.Id == memberId)
             .Select(item => new
             {
@@ -76,6 +101,7 @@ public class MembersController : ControllerBase
     }
 
     [HttpPost("members")]
+    [RequirePermission(AccessControlCatalog.MembersCreate)]
     public async Task<ActionResult<ApiEnvelope<object>>> CreateMember(
         [FromBody] CreateMemberRequest request,
         CancellationToken cancellationToken)
@@ -85,12 +111,23 @@ public class MembersController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
-        if (request.BranchId <= 0)
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
+        if (branchId.HasValue && request.BranchId != branchId.Value)
+        {
+            return Forbid();
+        }
+
+        var targetBranchId = branchId ?? request.BranchId;
+        if (targetBranchId <= 0)
         {
             return BadRequest(new ApiEnvelope<object>(false, "A valid branch is required.", null, null, HttpContext.TraceIdentifier));
         }
 
-        var branchExists = await _dbContext.Branches.AnyAsync(item => item.Id == request.BranchId && item.IsActive, cancellationToken);
+        var branchExists = await _dbContext.Branches.AnyAsync(item => item.Id == targetBranchId && item.IsActive, cancellationToken);
         if (!branchExists)
         {
             return BadRequest(new ApiEnvelope<object>(false, "The selected branch is not available.", null, null, HttpContext.TraceIdentifier));
@@ -103,7 +140,7 @@ public class MembersController : ControllerBase
         if (!string.IsNullOrWhiteSpace(normalizedNationalId))
         {
             var duplicate = await _dbContext.Members.AnyAsync(
-                member => member.BranchId == request.BranchId && member.NationalId != null && member.NationalId.Trim() == normalizedNationalId,
+                member => member.BranchId == targetBranchId && member.NationalId != null && member.NationalId.Trim() == normalizedNationalId,
                 cancellationToken);
 
             if (duplicate)
@@ -114,7 +151,7 @@ public class MembersController : ControllerBase
 
         var member = new Member
         {
-            BranchId = request.BranchId,
+            BranchId = targetBranchId,
             FirstName = request.FirstName.Trim(),
             LastName = request.LastName.Trim(),
             PhoneNumber = string.IsNullOrWhiteSpace(request.PhoneNumber) ? null : request.PhoneNumber.Trim(),
@@ -123,8 +160,14 @@ public class MembersController : ControllerBase
             CreatedAt = DateTime.UtcNow
         };
 
-        _dbContext.Members.Add(member);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await using (var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken))
+        {
+            _dbContext.Members.Add(member);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            _dbContext.AuditLogs.Add(AuditLogFactory.Create(User, member.BranchId, "Member created", "Member", member.Id.ToString()));
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
 
         var created = await _dbContext.Members
             .AsNoTracking()

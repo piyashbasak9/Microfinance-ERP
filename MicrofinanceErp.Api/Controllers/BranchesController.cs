@@ -1,4 +1,6 @@
 using MicrofinanceErp.Api.Models;
+using MicrofinanceErp.Api.Security;
+using MicrofinanceErp.Domain.Security;
 using MicrofinanceErp.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -18,12 +20,23 @@ public class BranchesController : ControllerBase
     }
 
     [HttpGet("branches")]
-    [Authorize]
+    [RequirePermission(AccessControlCatalog.BranchesRead)]
     public async Task<ActionResult<ApiEnvelope<object>>> GetBranches(CancellationToken cancellationToken)
     {
-        var branches = await _dbContext.Branches
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
+        var query = _dbContext.Branches
             .AsNoTracking()
-            .Where(branch => branch.IsActive)
+            .Where(branch => branch.IsActive);
+        if (branchId.HasValue)
+        {
+            query = query.Where(branch => branch.Id == branchId.Value);
+        }
+
+        var branches = await query
             .OrderBy(branch => branch.Id)
             .Select(branch => new
             {

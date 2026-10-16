@@ -2,8 +2,11 @@ using System.ComponentModel.DataAnnotations;
 using System.Data;
 using System.Security.Claims;
 using MicrofinanceErp.Api.Models;
+using MicrofinanceErp.Api.Security;
 using MicrofinanceErp.Domain.Entities;
+using MicrofinanceErp.Domain.Security;
 using MicrofinanceErp.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,17 +18,30 @@ public class SavingsController : ControllerBase
 {
     private const decimal MaximumMoneyAmount = 9999999999999999.99m;
     private readonly MicrofinanceErpDbContext _dbContext;
+    private readonly AccountingPostingService _accountingPostingService;
 
-    public SavingsController(MicrofinanceErpDbContext dbContext)
+    public SavingsController(MicrofinanceErpDbContext dbContext, AccountingPostingService accountingPostingService)
     {
         _dbContext = dbContext;
+        _accountingPostingService = accountingPostingService;
     }
 
     [HttpGet("savings/accounts")]
+    [RequirePermission(AccessControlCatalog.SavingsRead)]
     public async Task<ActionResult<ApiEnvelope<object>>> GetAccounts(CancellationToken cancellationToken)
     {
-        var accounts = await _dbContext.SavingsAccounts
-            .AsNoTracking()
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
+        var query = _dbContext.SavingsAccounts.AsNoTracking();
+        if (branchId.HasValue)
+        {
+            query = query.Where(account => account.Member.BranchId == branchId.Value);
+        }
+
+        var accounts = await query
             .OrderByDescending(account => account.CreatedAt)
             .Select(account => new
             {
@@ -46,16 +62,29 @@ public class SavingsController : ControllerBase
     }
 
     [HttpPost("savings/accounts")]
+    [RequirePermission(AccessControlCatalog.SavingsCreateAccount)]
     public async Task<ActionResult<ApiEnvelope<object>>> CreateAccount(
         [FromBody] CreateSavingsAccountRequest request,
         CancellationToken cancellationToken)
     {
-        var member = await _dbContext.Members
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
+        var memberQuery = _dbContext.Members
             .AsNoTracking()
-            .Where(item => item.Id == request.MemberId)
+            .Where(item => item.Id == request.MemberId);
+        if (branchId.HasValue)
+        {
+            memberQuery = memberQuery.Where(item => item.BranchId == branchId.Value);
+        }
+
+        var member = await memberQuery
             .Select(item => new
             {
                 item.Id,
+                item.BranchId,
                 item.Status,
                 item.FirstName,
                 item.LastName,
@@ -86,12 +115,16 @@ public class SavingsController : ControllerBase
             CreatedAt = now
         };
 
-        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
-        _dbContext.SavingsAccounts.Add(account);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        account.AccountNumber = $"{member.BranchCode}-SV-{account.Id:D6}";
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await using (var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken))
+        {
+            _dbContext.SavingsAccounts.Add(account);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            account.AccountNumber = $"{member.BranchCode}-SV-{account.Id:D6}";
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            _dbContext.AuditLogs.Add(AuditLogFactory.Create(User, member.BranchId, "Savings account opened", "SavingsAccount", account.Id.ToString()));
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
 
         var result = new
         {
@@ -113,20 +146,37 @@ public class SavingsController : ControllerBase
     }
 
     [HttpGet("savings/accounts/{accountId:int}/transactions")]
+    [RequirePermission(AccessControlCatalog.SavingsRead)]
     public async Task<ActionResult<ApiEnvelope<object>>> GetTransactions(
         int accountId,
         CancellationToken cancellationToken)
     {
-        var accountExists = await _dbContext.SavingsAccounts
-            .AnyAsync(account => account.Id == accountId, cancellationToken);
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
+        var accountQuery = _dbContext.SavingsAccounts.Where(account => account.Id == accountId);
+        if (branchId.HasValue)
+        {
+            accountQuery = accountQuery.Where(account => account.Member.BranchId == branchId.Value);
+        }
+
+        var accountExists = await accountQuery.AnyAsync(cancellationToken);
         if (!accountExists)
         {
             return NotFound(new ApiEnvelope<object>(false, "Savings account not found.", null, null, HttpContext.TraceIdentifier));
         }
 
-        var entries = await _dbContext.SavingsTransactions
+        var entriesQuery = _dbContext.SavingsTransactions
             .AsNoTracking()
-            .Where(item => item.SavingsAccountId == accountId)
+            .Where(item => item.SavingsAccountId == accountId);
+        if (branchId.HasValue)
+        {
+            entriesQuery = entriesQuery.Where(item => item.SavingsAccount.Member.BranchId == branchId.Value);
+        }
+
+        var entries = await entriesQuery
             .OrderByDescending(item => item.CreatedAt)
             .Select(item => new
             {
@@ -143,12 +193,18 @@ public class SavingsController : ControllerBase
     }
 
     [HttpPost("savings/accounts/{accountId:int}/transactions")]
+    [RequirePermission(AccessControlCatalog.SavingsTransact)]
     public async Task<ActionResult<ApiEnvelope<object>>> CreateTransaction(
         int accountId,
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         [FromBody] CreateSavingsTransactionRequest request,
         CancellationToken cancellationToken)
     {
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 100)
         {
             return BadRequest(new ApiEnvelope<object>(
@@ -177,9 +233,12 @@ public class SavingsController : ControllerBase
 
         await using var dbTransaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
 
-        var account = await _dbContext.SavingsAccounts
-            .FromSqlInterpolated($"SELECT * FROM \"SavingsAccounts\" WHERE \"Id\" = {accountId} FOR UPDATE")
-            .SingleOrDefaultAsync(cancellationToken);
+        var accountQuery = branchId.HasValue
+            ? _dbContext.SavingsAccounts.FromSqlInterpolated(
+                $"SELECT account.* FROM \"SavingsAccounts\" AS account INNER JOIN \"Members\" AS member ON member.\"Id\" = account.\"MemberId\" WHERE account.\"Id\" = {accountId} AND member.\"BranchId\" = {branchId.Value} FOR UPDATE OF account")
+            : _dbContext.SavingsAccounts.FromSqlInterpolated(
+                $"SELECT * FROM \"SavingsAccounts\" WHERE \"Id\" = {accountId} FOR UPDATE");
+        var account = await accountQuery.SingleOrDefaultAsync(cancellationToken);
 
         if (account is null)
         {
@@ -261,6 +320,37 @@ public class SavingsController : ControllerBase
         };
 
         _dbContext.SavingsTransactions.Add(entry);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        var transactionBranchId = await _dbContext.Members
+            .Where(member => member.Id == account.MemberId)
+            .Select(member => member.BranchId)
+            .SingleAsync(cancellationToken);
+        var postingLines = normalizedType == "Deposit"
+            ? new[]
+            {
+                (AccountingPostingService.CashAccountCode, request.Amount, 0m),
+                (AccountingPostingService.MemberSavingsAccountCode, 0m, request.Amount)
+            }
+            : new[]
+            {
+                (AccountingPostingService.MemberSavingsAccountCode, request.Amount, 0m),
+                (AccountingPostingService.CashAccountCode, 0m, request.Amount)
+            };
+        await _accountingPostingService.PostAsync(
+            transactionBranchId,
+            "SavingsTransaction",
+            entry.Id.ToString(),
+            $"Savings {normalizedType.ToLowerInvariant()}",
+            now,
+            User,
+            postingLines,
+            cancellationToken);
+        _dbContext.AuditLogs.Add(AuditLogFactory.Create(
+            User,
+            transactionBranchId,
+            $"Savings {normalizedType.ToLowerInvariant()} posted",
+            "SavingsTransaction",
+            entry.Id.ToString()));
         await _dbContext.SaveChangesAsync(cancellationToken);
         await dbTransaction.CommitAsync(cancellationToken);
 

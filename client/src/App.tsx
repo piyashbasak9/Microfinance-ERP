@@ -1,10 +1,11 @@
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   BrowserRouter,
   Navigate,
   NavLink,
   Route,
   Routes,
+  useSearchParams,
   useNavigate,
 } from 'react-router-dom';
 import './App.css';
@@ -12,6 +13,7 @@ import './App.css';
 type MenuItem = {
   label: string;
   path: string;
+  permissions: string[];
 };
 
 type ApiEnvelope<T> = {
@@ -28,16 +30,36 @@ type AuthenticatedUser = {
   branchId: number | null;
 };
 
-type SessionState = {
-  token: string;
-  user: AuthenticatedUser;
-};
-
 type LoginResult = {
   user: AuthenticatedUser;
   permissions: string[];
   token: string;
   expiresAt: string;
+};
+
+type ManagedUser = {
+  id: number;
+  email: string;
+  fullName: string;
+  role: string;
+  branchId: number | null;
+  isActive: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+};
+
+type PermissionDefinition = {
+  code: string;
+  module: string;
+  description: string;
+};
+
+type ManagedRole = {
+  name: string;
+  description: string;
+  isSystemRole: boolean;
+  isActive: boolean;
+  permissions: string[];
 };
 
 type MemberRecord = {
@@ -73,10 +95,12 @@ type DashboardSummary = {
   activeMembers: number;
   savingsBalance: number;
   outstandingLoans: number;
-  todayCollections: number;
-  overdueAmount: number;
-  portfolioAtRisk: number;
+  todayCollections: number | null;
+  overdueAmount: number | null;
+  portfolioAtRisk: number | null;
   metrics: DashboardMetric[];
+  recentMembers: { id: number; name: string; status: string; branch: string }[];
+  recentLoans: { id: number; member: string; product: string; outstanding: number; status: string }[];
 };
 
 type SavingsAccount = {
@@ -119,9 +143,19 @@ type SystemSettings = {
 };
 
 type TrialBalanceEntry = {
+  id: number;
+  code: string;
   account: string;
+  accountType: string;
   debit: number;
   credit: number;
+};
+
+type TrialBalance = {
+  accounts: TrialBalanceEntry[];
+  totalDebits: number;
+  totalCredits: number;
+  isBalanced: boolean;
 };
 
 type LoanPortfolioItem = {
@@ -137,6 +171,18 @@ type LoanPortfolioItem = {
   disbursedAt: string | null;
 };
 
+type LoanInstallment = {
+  installmentNumber: number;
+  principal: number;
+  interest: number;
+  total: number;
+  balance: number;
+  dueDate: string | null;
+  status: string;
+  principalPaid: number;
+  interestPaid: number;
+};
+
 type CollectionSheet = {
   id: number;
   center: string;
@@ -150,84 +196,164 @@ type CollectionSheet = {
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 
 const menuItems: MenuItem[] = [
-  { label: 'Dashboard', path: '/dashboard' },
-  { label: 'Members', path: '/members' },
-  { label: 'Savings', path: '/savings' },
-  { label: 'Loans', path: '/loans' },
-  { label: 'Collections', path: '/collections' },
-  { label: 'Accounting', path: '/accounting' },
-  { label: 'Reports', path: '/reports' },
-  { label: 'Audit', path: '/audit' },
-  { label: 'Settings', path: '/settings' },
-];
-
-const dashboardStats = [
-  { label: 'Active Members', value: '1,284', trend: '+8.4%' },
-  { label: 'Savings Balance', value: '৳48.9L', trend: '+5.2%' },
-  { label: 'Outstanding Loans', value: '৳31.8L', trend: '+1.9%' },
-  { label: 'PAR 30', value: '7.4%', trend: '-0.6%' },
-];
-
-const memberRows = [
-  { name: 'Rahima Khatun', code: 'BR01-000124', status: 'Active', center: 'North Center' },
-  { name: 'Abul Hasan', code: 'BR01-000125', status: 'Active', center: 'North Center' },
-  { name: 'Shakila Begum', code: 'BR01-000126', status: 'Pending KYC', center: 'East Center' },
-];
-
-const loanRows = [
-  { member: 'Rahima Khatun', product: 'Micro Enterprise', outstanding: '৳3,25,000', status: 'Active' },
-  { member: 'Abul Hasan', product: 'Women Startup', outstanding: '৳1,85,500', status: 'Active' },
-  { member: 'Shakila Begum', product: 'Fast Loan', outstanding: '৳42,000', status: 'Approved' },
-];
-
-const collectionRows = [
-  { center: 'North Center', officer: 'Mizan', collected: '৳89,000', status: 'Reconciled' },
-  { center: 'East Center', officer: 'Farhana', collected: '৳1,02,500', status: 'Posted' },
-  { center: 'South Center', officer: 'Nabil', collected: '৳64,000', status: 'Submitted' },
+  { label: 'Dashboard', path: '/dashboard', permissions: ['Dashboard.Read'] },
+  { label: 'Members', path: '/members', permissions: ['Members.Read'] },
+  { label: 'Savings', path: '/savings', permissions: ['Savings.Read'] },
+  { label: 'Loans', path: '/loans', permissions: ['Loans.Read'] },
+  { label: 'Collections', path: '/collections', permissions: ['Collections.Read'] },
+  { label: 'Accounting', path: '/accounting', permissions: ['Accounting.Read'] },
+  { label: 'Reports', path: '/reports', permissions: ['Reports.Read'] },
+  { label: 'Audit', path: '/audit', permissions: ['Audit.Read'] },
+  { label: 'Settings', path: '/settings', permissions: ['Settings.Read'] },
+  { label: 'Security', path: '/admin', permissions: ['Security.Users.Manage', 'Security.Roles.Manage'] },
 ];
 
 function App() {
-  const [session, setSession] = useState<SessionState | null>(() => {
-    try {
-      const storedSession = window.localStorage.getItem('mfi-session');
-      return storedSession ? (JSON.parse(storedSession) as SessionState) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [session, setSession] = useState<LoginResult | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [authError, setAuthError] = useState('');
 
   useEffect(() => {
-    if (session) {
-      window.localStorage.setItem('mfi-session', JSON.stringify(session));
-      return;
+    window.localStorage.removeItem('mfi-session');
+    const abortController = new AbortController();
+    const initializeSession = async () => {
+      try {
+        const restoredSession = await refreshSession(abortController.signal);
+        if (restoredSession) {
+          setSession(restoredSession);
+        }
+      } catch (requestError) {
+        setAuthError(requestError instanceof Error ? requestError.message : 'Unable to restore your session.');
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+
+    void initializeSession();
+    return () => abortController.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!session) {
+      return undefined;
     }
 
-    window.localStorage.removeItem('mfi-session');
+    const refreshDelay = Math.max(Date.parse(session.expiresAt) - Date.now() - 30_000, 0);
+    const timeout = window.setTimeout(() => {
+      void refreshSession()
+        .then((refreshedSession) => {
+          if (!refreshedSession) {
+            setSession(null);
+            setAuthError('Your session expired. Sign in again.');
+            return;
+          }
+
+          setSession(refreshedSession);
+        })
+        .catch((requestError: unknown) => {
+          setSession(null);
+          setAuthError(requestError instanceof Error ? requestError.message : 'Unable to refresh your session.');
+        });
+    }, refreshDelay);
+
+    return () => window.clearTimeout(timeout);
   }, [session]);
 
-  const handleLogout = () => setSession(null);
+  const handleLogout = () => {
+    void fetch(`${apiBaseUrl}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    }).then((response) => {
+      if (!response.ok) {
+        setAuthError('The server could not revoke this session. It will expire automatically.');
+      }
+    }).catch(() => {
+      setAuthError('The server could not revoke this session. It will expire automatically.');
+    });
+    setSession(null);
+  };
+
+  const renderProtectedPage = (requiredPermissions: string | string[], content: ReactNode) => {
+    if (!session) {
+      return <Navigate to="/login" replace />;
+    }
+    const permissionList = typeof requiredPermissions === 'string' ? [requiredPermissions] : requiredPermissions;
+    if (!permissionList.some((permission) => session.permissions.includes(permission))) {
+      const fallbackPath = menuItems.find((item) => item.permissions.some((itemPermission) => session.permissions.includes(itemPermission)))?.path ?? '/login';
+      return <Navigate to={fallbackPath} replace />;
+    }
+
+    return (
+      <AppLayout
+        user={session.user}
+        token={session.token}
+        permissions={session.permissions}
+        onLogout={handleLogout}
+      >
+        {content}
+      </AppLayout>
+    );
+  };
 
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <LoginPage onLogin={setSession} />} />
-        <Route path="/dashboard" element={session ? <AppLayout user={session.user} token={session.token} onLogout={handleLogout} /> : <Navigate to="/login" replace />} />
-        <Route path="/members" element={session ? <AppLayout user={session.user} token={session.token} onLogout={handleLogout}><MembersPage token={session.token} /></AppLayout> : <Navigate to="/login" replace />} />
-        <Route path="/savings" element={session ? <AppLayout user={session.user} token={session.token} onLogout={handleLogout}><SavingsPage token={session.token} /></AppLayout> : <Navigate to="/login" replace />} />
-        <Route path="/loans" element={session ? <AppLayout user={session.user} token={session.token} onLogout={handleLogout}><LoansPage token={session.token} /></AppLayout> : <Navigate to="/login" replace />} />
-        <Route path="/collections" element={session ? <AppLayout user={session.user} token={session.token} onLogout={handleLogout}><CollectionsPage token={session.token} /></AppLayout> : <Navigate to="/login" replace />} />
-        <Route path="/accounting" element={session ? <AppLayout user={session.user} token={session.token} onLogout={handleLogout}><AccountingPage token={session.token} /></AppLayout> : <Navigate to="/login" replace />} />
-        <Route path="/reports" element={session ? <AppLayout user={session.user} token={session.token} onLogout={handleLogout}><ReportsPage token={session.token} /></AppLayout> : <Navigate to="/login" replace />} />
-        <Route path="/audit" element={session ? <AppLayout user={session.user} token={session.token} onLogout={handleLogout}><AuditPage token={session.token} /></AppLayout> : <Navigate to="/login" replace />} />
-        <Route path="/settings" element={session ? <AppLayout user={session.user} token={session.token} onLogout={handleLogout}><SettingsPage token={session.token} /></AppLayout> : <Navigate to="/login" replace />} />
-        <Route path="/" element={<Navigate to={session ? '/dashboard' : '/login'} replace />} />
-        <Route path="*" element={<Navigate to={session ? '/dashboard' : '/login'} replace />} />
-      </Routes>
+      {isInitializing ? (
+        <div className="login-page"><div className="empty-state">Restoring your session…</div></div>
+      ) : (
+        <Routes>
+          <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <LoginPage onLogin={(nextSession) => { setAuthError(''); setSession(nextSession); }} initialError={authError} />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/dashboard" element={renderProtectedPage('Dashboard.Read', <DashboardPage token={session?.token ?? ''} />)} />
+          <Route path="/members" element={renderProtectedPage('Members.Read', <MembersPage token={session?.token ?? ''} />)} />
+          <Route path="/savings" element={renderProtectedPage('Savings.Read', <SavingsPage token={session?.token ?? ''} />)} />
+          <Route path="/loans" element={renderProtectedPage('Loans.Read', <LoansPage token={session?.token ?? ''} />)} />
+          <Route path="/collections" element={renderProtectedPage('Collections.Read', <CollectionsPage token={session?.token ?? ''} />)} />
+          <Route path="/accounting" element={renderProtectedPage('Accounting.Read', <AccountingPage token={session?.token ?? ''} />)} />
+          <Route path="/reports" element={renderProtectedPage('Reports.Read', <ReportsPage token={session?.token ?? ''} />)} />
+          <Route path="/audit" element={renderProtectedPage('Audit.Read', <AuditPage token={session?.token ?? ''} />)} />
+          <Route path="/settings" element={renderProtectedPage('Settings.Read', <SettingsPage token={session?.token ?? ''} onLogout={handleLogout} />)} />
+          <Route path="/admin" element={renderProtectedPage(['Security.Users.Manage', 'Security.Roles.Manage'], <SecurityAdminPage token={session?.token ?? ''} permissions={session?.permissions ?? []} />)} />
+          <Route path="/" element={<Navigate to={session ? (menuItems.find((item) => item.permissions.some((permission) => session.permissions.includes(permission)))?.path ?? '/login') : '/login'} replace />} />
+          <Route path="*" element={<Navigate to={session ? (menuItems.find((item) => item.permissions.some((permission) => session.permissions.includes(permission)))?.path ?? '/login') : '/login'} replace />} />
+        </Routes>
+      )}
     </BrowserRouter>
   );
 }
 
-function AppLayout({ children, user, token, onLogout }: { children?: ReactNode; user: AuthenticatedUser; token: string; onLogout: () => void }) {
+async function refreshSession(signal?: AbortSignal): Promise<LoginResult | null> {
+  const response = await fetch(`${apiBaseUrl}/auth/refresh`, {
+    method: 'POST',
+    credentials: 'include',
+    signal,
+  });
+  if (response.status === 401) {
+    return null;
+  }
+
+  const envelope = (await response.json()) as ApiEnvelope<LoginResult>;
+  if (!response.ok || !envelope.success || !envelope.data) {
+    throw new Error(envelope.message || 'Unable to restore your session.');
+  }
+  return envelope.data;
+}
+
+async function adminRequest<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', `Bearer ${token}`);
+  if (init.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
+  const envelope = (await response.json()) as ApiEnvelope<T>;
+  if (!response.ok || !envelope.success || !envelope.data) {
+    throw new Error(envelope.message || 'The security request failed.');
+  }
+  return envelope.data;
+}
+
+function AppLayout({ children, user, token, permissions, onLogout }: { children?: ReactNode; user: AuthenticatedUser; token: string; permissions: string[]; onLogout: () => void }) {
   const navigate = useNavigate();
 
   const handleLogout = () => {
@@ -247,7 +373,7 @@ function AppLayout({ children, user, token, onLogout }: { children?: ReactNode; 
         </div>
 
         <nav className="menu">
-          {menuItems.map((item) => (
+          {menuItems.filter((item) => item.permissions.some((permission) => permissions.includes(permission))).map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -278,7 +404,7 @@ function AppLayout({ children, user, token, onLogout }: { children?: ReactNode; 
   );
 }
 
-function LoginPage({ onLogin }: { onLogin: (session: { token: string; user: AuthenticatedUser }) => void }) {
+function LoginPage({ onLogin, initialError }: { onLogin: (session: LoginResult) => void; initialError: string }) {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -293,6 +419,7 @@ function LoginPage({ onLogin }: { onLogin: (session: { token: string; user: Auth
     try {
       const response = await fetch(`${apiBaseUrl}/auth/login`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
@@ -301,7 +428,7 @@ function LoginPage({ onLogin }: { onLogin: (session: { token: string; user: Auth
         throw new Error(envelope.message || 'Sign in failed.');
       }
 
-      onLogin({ token: envelope.data.token, user: envelope.data.user });
+      onLogin(envelope.data);
       navigate('/dashboard');
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to sign in. Please try again.');
@@ -322,6 +449,7 @@ function LoginPage({ onLogin }: { onLogin: (session: { token: string; user: Auth
         </div>
 
         <form onSubmit={handleSubmit} className="login-form">
+          {initialError && <p role="alert">{initialError}</p>}
           <label>
             Email
             <input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required />
@@ -333,7 +461,383 @@ function LoginPage({ onLogin }: { onLogin: (session: { token: string; user: Auth
           {error && <p role="alert">{error}</p>}
           <button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Signing in…' : 'Sign in'}</button>
         </form>
+        <button type="button" className="text-button" onClick={() => navigate('/reset-password')}>Forgot password?</button>
       </div>
+    </div>
+  );
+}
+
+function ResetPasswordPage() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const resetToken = searchParams.get('token') ?? '';
+  const [email, setEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setMessage('');
+    setError('');
+    if (resetToken && newPassword !== confirmPassword) {
+      setError('New password and confirmation do not match.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const endpoint = resetToken ? '/auth/password/reset' : '/auth/password/forgot';
+      const body = resetToken ? { token: resetToken, newPassword } : { email };
+      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const envelope = (await response.json()) as ApiEnvelope<{ signInRequired?: boolean }>;
+      if (!response.ok || !envelope.success) {
+        throw new Error(envelope.message || 'Unable to complete the password request.');
+      }
+
+      setMessage(envelope.message);
+      if (resetToken) {
+        setNewPassword('');
+        setConfirmPassword('');
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to complete the password request.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        <div className="brand-header">
+          <div className="brand-mark large">M</div>
+          <div>
+            <h2>{resetToken ? 'Choose a new password' : 'Reset your password'}</h2>
+            <p>{resetToken ? 'Your reset link can only be used once.' : 'We will email instructions if an active account matches.'}</p>
+          </div>
+        </div>
+        <form className="login-form" onSubmit={handleSubmit}>
+          {resetToken ? (
+            <>
+              <label>
+                New password
+                <input type="password" autoComplete="new-password" minLength={12} maxLength={256} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              </label>
+              <label>
+                Confirm new password
+                <input type="password" autoComplete="new-password" minLength={12} maxLength={256} required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+              </label>
+            </>
+          ) : (
+            <label>
+              Email
+              <input type="email" autoComplete="email" maxLength={256} required value={email} onChange={(event) => setEmail(event.target.value)} />
+            </label>
+          )}
+          {error && <p className="error-state" role="alert">{error}</p>}
+          {message && <p className="success-state" role="status">{message}</p>}
+          <button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Please wait…' : resetToken ? 'Reset password' : 'Send reset instructions'}</button>
+        </form>
+        <button type="button" className="text-button" onClick={() => navigate('/login')}>Return to sign in</button>
+      </div>
+    </div>
+  );
+}
+
+function SecurityAdminPage({ token, permissions }: { token: string; permissions: string[] }) {
+  const canManageUsers = permissions.includes('Security.Users.Manage');
+  const canManageRoles = permissions.includes('Security.Roles.Manage');
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [roles, setRoles] = useState<ManagedRole[]>([]);
+  const [permissionDefinitions, setPermissionDefinitions] = useState<PermissionDefinition[]>([]);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [selectedRole, setSelectedRole] = useState<string | null>(null);
+  const selectedRoleRef = useRef<string | null>(null);
+  const [editingUser, setEditingUser] = useState<number | null>(null);
+  const [userForm, setUserForm] = useState({ email: '', fullName: '', role: '', branchId: '', password: '', isActive: true });
+  const [roleForm, setRoleForm] = useState({ name: '', description: '', permissions: [] as string[] });
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const loadSecurityData = useCallback(async (preferredRole?: string) => {
+    const [loadedUsers, loadedBranches, loadedRoles, loadedPermissions] = await Promise.all([
+      canManageUsers ? adminRequest<ManagedUser[]>('/admin/users', token) : Promise.resolve([] as ManagedUser[]),
+      canManageUsers ? adminRequest<BranchOption[]>('/branches', token) : Promise.resolve([] as BranchOption[]),
+      canManageRoles ? adminRequest<ManagedRole[]>('/admin/roles', token) : Promise.resolve([] as ManagedRole[]),
+      canManageRoles ? adminRequest<PermissionDefinition[]>('/admin/permissions', token) : Promise.resolve([] as PermissionDefinition[]),
+    ]);
+    return {
+      users: loadedUsers,
+      branches: loadedBranches,
+      roles: loadedRoles,
+      permissions: loadedPermissions,
+      preferredRole,
+    };
+  }, [canManageRoles, canManageUsers, token]);
+
+  const applySecurityData = useCallback((data: Awaited<ReturnType<typeof loadSecurityData>>) => {
+    setUsers(data.users);
+    setBranches(data.branches);
+    setRoles(data.roles);
+    setPermissionDefinitions(data.permissions);
+
+    const roleToSelect = data.preferredRole ?? selectedRoleRef.current ?? data.roles[0]?.name;
+    const role = data.roles.find((item) => item.name === roleToSelect);
+    if (role) {
+      selectedRoleRef.current = role.name;
+      setSelectedRole(role.name);
+      setRoleForm({ name: '', description: '', permissions: role.permissions });
+    }
+  }, []);
+
+  const refreshSecurityData = useCallback(async (preferredRole?: string) => {
+    setLoading(true);
+    setError('');
+    try {
+      applySecurityData(await loadSecurityData(preferredRole));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to load security administration.');
+    } finally {
+      setLoading(false);
+    }
+  }, [applySecurityData, loadSecurityData]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    const initialize = async () => {
+      try {
+        const data = await loadSecurityData();
+        if (isCurrent) {
+          applySecurityData(data);
+        }
+      } catch (requestError) {
+        if (isCurrent) {
+          setError(requestError instanceof Error ? requestError.message : 'Unable to load security administration.');
+        }
+      } finally {
+        if (isCurrent) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void initialize();
+    return () => {
+      isCurrent = false;
+    };
+  }, [applySecurityData, loadSecurityData]);
+
+  const submitUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError('');
+    setNotice('');
+    setSubmitting(true);
+    try {
+      const payload = {
+        email: userForm.email,
+        fullName: userForm.fullName,
+        role: userForm.role,
+        branchId: userForm.branchId ? Number(userForm.branchId) : null,
+        ...(editingUser === null ? { password: userForm.password } : { isActive: userForm.isActive }),
+      };
+      await adminRequest<ManagedUser>(
+        editingUser === null ? '/admin/users' : `/admin/users/${editingUser}`,
+        token,
+        { method: editingUser === null ? 'POST' : 'PUT', body: JSON.stringify(payload) },
+      );
+      setNotice(editingUser === null ? 'Staff account created.' : 'Staff account updated.');
+      setEditingUser(null);
+      setUserForm({ email: '', fullName: '', role: roles[0]?.name ?? '', branchId: '', password: '', isActive: true });
+      await refreshSecurityData();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to save the staff account.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const editUser = (user: ManagedUser) => {
+    setEditingUser(user.id);
+    setUserForm({
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+      branchId: user.branchId?.toString() ?? '',
+      password: '',
+      isActive: user.isActive,
+    });
+  };
+
+  const selectedRoleDetails = roles.find((role) => role.name === selectedRole);
+
+  const saveRole = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError('');
+    setNotice('');
+    setSubmitting(true);
+    try {
+      if (selectedRole) {
+        await adminRequest<ManagedRole>(
+          `/admin/roles/${encodeURIComponent(selectedRole)}/permissions`,
+          token,
+          { method: 'PUT', body: JSON.stringify({ permissionCodes: roleForm.permissions }) },
+        );
+        setNotice('Role permissions updated.');
+      } else {
+        const createdRole = await adminRequest<ManagedRole>(
+          '/admin/roles',
+          token,
+          { method: 'POST', body: JSON.stringify({ name: roleForm.name, description: roleForm.description, permissionCodes: roleForm.permissions }) },
+        );
+        setNotice('Role created.');
+        await refreshSecurityData(createdRole.name);
+        return;
+      }
+      await refreshSecurityData();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to save the role.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const startNewRole = () => {
+    selectedRoleRef.current = '';
+    setSelectedRole('');
+    setRoleForm({ name: '', description: '', permissions: [] });
+  };
+
+  const selectRole = (roleName: string) => {
+    selectedRoleRef.current = roleName;
+    setSelectedRole(roleName);
+    const role = roles.find((item) => item.name === roleName);
+    setRoleForm({
+      name: '',
+      description: '',
+      permissions: role?.permissions ?? [],
+    });
+  };
+
+  const toggleRolePermission = (code: string) => {
+    setRoleForm((current) => ({
+      ...current,
+      permissions: current.permissions.includes(code)
+        ? current.permissions.filter((permission) => permission !== code)
+        : [...current.permissions, code],
+    }));
+  };
+
+  return (
+    <div className="page-stack">
+      <section className="page-card panel">
+        <div className="page-toolbar">
+          <div>
+            <h2>Security administration</h2>
+            <p>Manage staff accounts and database-backed role permissions.</p>
+          </div>
+          <button type="button" onClick={() => void refreshSecurityData()} disabled={loading}>Refresh</button>
+        </div>
+        {loading && <div className="empty-state">Loading security data…</div>}
+        {error && <div className="empty-state error-state" role="alert">{error}</div>}
+        {notice && <div className="empty-state success-state" role="status">{notice}</div>}
+
+        {canManageUsers && (
+          <section className="admin-section">
+            <h3>Staff users</h3>
+            <form className="admin-form" onSubmit={submitUser}>
+              <div className="admin-form-grid">
+                <label>Email<input type="email" required maxLength={256} value={userForm.email} onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))} /></label>
+                <label>Full name<input required maxLength={200} value={userForm.fullName} onChange={(event) => setUserForm((current) => ({ ...current, fullName: event.target.value }))} /></label>
+                <label>Role
+                  <select required value={userForm.role} onChange={(event) => setUserForm((current) => ({ ...current, role: event.target.value }))}>
+                    <option value="">Select a role</option>
+                    {roles.map((role) => role.isActive && <option key={role.name} value={role.name}>{role.name}</option>)}
+                  </select>
+                </label>
+                <label>Branch
+                  <select value={userForm.branchId} onChange={(event) => setUserForm((current) => ({ ...current, branchId: event.target.value }))}>
+                    <option value="">All branches</option>
+                    {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+                  </select>
+                </label>
+                {editingUser === null && <label>Initial password<input type="password" required minLength={12} maxLength={256} autoComplete="new-password" value={userForm.password} onChange={(event) => setUserForm((current) => ({ ...current, password: event.target.value }))} /></label>}
+                {editingUser !== null && <label className="checkbox-label"><input type="checkbox" checked={userForm.isActive} onChange={(event) => setUserForm((current) => ({ ...current, isActive: event.target.checked }))} /> Account active</label>}
+              </div>
+              <div className="form-actions">
+                {editingUser !== null && <button type="button" className="secondary-button" onClick={() => { setEditingUser(null); setUserForm({ email: '', fullName: '', role: roles[0]?.name ?? '', branchId: '', password: '', isActive: true }); }}>Cancel edit</button>}
+                <button type="submit" disabled={submitting}>{submitting ? 'Saving…' : editingUser === null ? 'Create staff user' : 'Update staff user'}</button>
+              </div>
+            </form>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Branch</th><th>Status</th><th>Last sign-in</th><th /></tr></thead>
+                <tbody>
+                  {users.map((user) => (
+                    <tr key={user.id}>
+                      <td>{user.fullName}</td><td>{user.email}</td><td>{user.role}</td>
+                      <td>{branches.find((branch) => branch.id === user.branchId)?.name ?? 'All branches'}</td>
+                      <td>{user.isActive ? 'Active' : 'Disabled'}</td>
+                      <td>{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'Never'}</td>
+                      <td><button type="button" className="secondary-button" onClick={() => editUser(user)}>Edit</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {users.length === 0 && !loading && <div className="empty-state">No staff users found.</div>}
+            </div>
+          </section>
+        )}
+      </section>
+
+      {canManageRoles && (
+        <section className="page-card panel">
+          <div className="page-toolbar">
+            <div><h2>Roles and permissions</h2><p>Permission changes take effect immediately for all users assigned to the role.</p></div>
+            <button type="button" onClick={startNewRole}>New role</button>
+          </div>
+          <div className="admin-form-grid role-select-grid">
+            <label>Role
+              <select value={selectedRole ?? ''} onChange={(event) => event.target.value ? selectRole(event.target.value) : startNewRole()}>
+                <option value="">Create a new role</option>
+                {roles.map((role) => <option key={role.name} value={role.name}>{role.name}{role.isSystemRole ? ' (system)' : ''}</option>)}
+              </select>
+            </label>
+            {selectedRoleDetails && <p>{selectedRoleDetails.description}{selectedRoleDetails.isSystemRole ? ' Built-in role permissions are read-only.' : ''}</p>}
+          </div>
+          <form className="admin-form" onSubmit={saveRole}>
+            {!selectedRole && (
+              <div className="admin-form-grid">
+                <label>Role name<input required minLength={2} maxLength={100} value={roleForm.name} onChange={(event) => setRoleForm((current) => ({ ...current, name: event.target.value }))} /></label>
+                <label>Description<input required minLength={1} maxLength={300} value={roleForm.description} onChange={(event) => setRoleForm((current) => ({ ...current, description: event.target.value }))} /></label>
+              </div>
+            )}
+            <div className="permission-grid">
+              {permissionDefinitions.map((permission) => (
+                <label key={permission.code} className="permission-option">
+                  <input
+                    type="checkbox"
+                    checked={roleForm.permissions.includes(permission.code)}
+                    disabled={!selectedRole || selectedRoleDetails?.isSystemRole}
+                    onChange={() => toggleRolePermission(permission.code)}
+                  />
+                  <span><strong>{permission.code}</strong><small>{permission.description}</small></span>
+                </label>
+              ))}
+            </div>
+            {!selectedRoleDetails?.isSystemRole && <div className="form-actions"><button type="submit" disabled={submitting}>{submitting ? 'Saving…' : selectedRole ? 'Save permissions' : 'Create role'}</button></div>}
+          </form>
+        </section>
+      )}
     </div>
   );
 }
@@ -379,16 +883,11 @@ function DashboardPage({ token }: { token: string }) {
     return () => abortController.abort();
   }, [token]);
 
-  const metrics = summary?.metrics ?? dashboardStats.map((item) => ({
-    label: item.label,
-    value: Number.parseFloat(item.value.replace(/[^\d.-]/g, '')),
-    trend: item.trend,
-    tone: 'positive',
-  }));
+  const metrics = summary?.metrics ?? [];
 
   const formatMetricValue = (metric: DashboardMetric) => {
-    if (metric.label.includes('PAR')) {
-      return `${metric.value.toFixed(1)}%`;
+    if (metric.label.includes('Members')) {
+      return new Intl.NumberFormat('en-BD', { maximumFractionDigits: 0 }).format(metric.value);
     }
 
     return new Intl.NumberFormat('en-BD', {
@@ -419,52 +918,38 @@ function DashboardPage({ token }: { token: string }) {
           <section className="two-col-layout">
             <div className="panel">
               <div className="panel-header">
-                <h3>Members</h3>
-                <button type="button">View all</button>
+                <h3>Recent members</h3>
+                <a href="/members">View all</a>
               </div>
               <table>
                 <thead>
                   <tr>
                     <th>Name</th>
                     <th>Status</th>
-                    <th>Center</th>
+                    <th>Branch</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {memberRows.map((row) => (
-                    <tr key={row.code}>
-                      <td>{row.name}</td>
-                      <td><span className="status-tag active">{row.status}</span></td>
-                      <td>{row.center}</td>
+                  {summary?.recentMembers.map((member) => (
+                    <tr key={member.id}>
+                      <td>{member.name}</td>
+                      <td><span className={`status-tag ${member.status.toLowerCase() === 'active' ? 'active' : ''}`}>{member.status}</span></td>
+                      <td>{member.branch}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {summary?.recentMembers.length === 0 && <div className="empty-state">No members have been registered yet.</div>}
             </div>
 
             <div className="panel">
               <div className="panel-header">
                 <h3>Collections</h3>
-                <button type="button">Open sheets</button>
+                <a href="/collections">Open module</a>
               </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Center</th>
-                    <th>Officer</th>
-                    <th>Collected</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {collectionRows.map((row) => (
-                    <tr key={row.center}>
-                      <td>{row.center}</td>
-                      <td>{row.officer}</td>
-                      <td>{row.collected}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="empty-state">
+                Collection totals will be available after collection posting is implemented.
+              </div>
             </div>
           </section>
 
@@ -483,16 +968,17 @@ function DashboardPage({ token }: { token: string }) {
                 </tr>
               </thead>
               <tbody>
-                {loanRows.map((row) => (
-                  <tr key={row.member}>
-                    <td>{row.member}</td>
-                    <td>{row.product}</td>
-                    <td>{row.outstanding}</td>
-                    <td><span className="status-tag active">{row.status}</span></td>
+                {summary?.recentLoans.map((loan) => (
+                  <tr key={loan.id}>
+                    <td>{loan.member}</td>
+                    <td>{loan.product}</td>
+                    <td>{new Intl.NumberFormat('en-BD', { style: 'currency', currency: 'BDT', maximumFractionDigits: 0 }).format(loan.outstanding)}</td>
+                    <td><span className={`status-tag ${loan.status.toLowerCase() === 'disbursed' ? 'active' : ''}`}>{loan.status}</span></td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {summary?.recentLoans.length === 0 && <div className="empty-state">No disbursed or overdue loans found.</div>}
           </section>
         </>
       )}
@@ -518,7 +1004,7 @@ function MembersPage({ token }: { token: string }) {
     status: 'Active',
   });
 
-  const loadBranches = async () => {
+  const loadBranches = useCallback(async () => {
     const response = await fetch(`${apiBaseUrl}/branches`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -530,10 +1016,15 @@ function MembersPage({ token }: { token: string }) {
 
     const branchOptions = envelope.data;
     setBranches(branchOptions);
-    if (branchOptions.length > 0 && !formState.branchId) {
-      setFormState((current) => ({ ...current, branchId: String(branchOptions[0].id) }));
+    if (branchOptions.length > 0) {
+      setFormState((current) => ({
+        ...current,
+        branchId: current.branchId || String(branchOptions[0].id),
+      }));
     }
-  };  useEffect(() => {
+  }, [token]);
+
+  useEffect(() => {
     const abortController = new AbortController();
 
     const loadMembers = async () => {
@@ -568,7 +1059,7 @@ function MembersPage({ token }: { token: string }) {
 
     void loadMembers();
     return () => abortController.abort();
-  }, [token]);
+  }, [loadBranches, token]);
 
   const resetForm = () => {
     setFormState({
@@ -1052,16 +1543,23 @@ function LoansPage({ token }: { token: string }) {
   const [error, setError] = useState('');
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
+  const [workflowMessage, setWorkflowMessage] = useState('');
+  const [selectedSchedule, setSelectedSchedule] = useState<{ loanId: number; entries: LoanInstallment[] } | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [selectedLoanForPayment, setSelectedLoanForPayment] = useState<number | null>(null);
+  const [repaymentAmount, setRepaymentAmount] = useState('');
+  const [repaymentKey, setRepaymentKey] = useState('');
+  const [repaymentSubmitting, setRepaymentSubmitting] = useState(false);
   const [formState, setFormState] = useState({
     memberId: '',
     productName: 'Business Loan',
     principalAmount: '50000',
     interestRate: '14',
     tenureMonths: '12',
-    status: 'Approved',
+    status: 'Pending',
   });
 
-  const loadMembers = async () => {
+  const loadMembers = useCallback(async () => {
     const response = await fetch(`${apiBaseUrl}/members`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -1075,10 +1573,13 @@ function LoansPage({ token }: { token: string }) {
 
     const memberList = envelope.data;
     setMembers(memberList);
-    if (memberList.length > 0 && !formState.memberId) {
-      setFormState((current) => ({ ...current, memberId: String(memberList[0].id) }));
+    if (memberList.length > 0) {
+      setFormState((current) => ({
+        ...current,
+        memberId: current.memberId || String(memberList[0].id),
+      }));
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1115,7 +1616,7 @@ function LoansPage({ token }: { token: string }) {
 
     void loadLoans();
     return () => abortController.abort();
-  }, [token]);
+  }, [loadMembers, token]);
 
   const resetForm = () => {
     setFormState({
@@ -1124,7 +1625,7 @@ function LoansPage({ token }: { token: string }) {
       principalAmount: '50000',
       interestRate: '14',
       tenureMonths: '12',
-      status: 'Approved',
+      status: 'Pending',
     });
     setFormError('');
     setFormSuccess('');
@@ -1141,7 +1642,7 @@ function LoansPage({ token }: { token: string }) {
         memberId: Number(formState.memberId),
         productName: formState.productName.trim(),
         principalAmount: Number(formState.principalAmount),
-        interestRate: Number(formState.interestRate),
+        interestRate: Number(formState.interestRate) / 100,
         tenureMonths: Number(formState.tenureMonths),
         status: formState.status,
       };
@@ -1172,6 +1673,120 @@ function LoansPage({ token }: { token: string }) {
     }
   };
 
+  const handleLoanTransition = async (loanId: number, transition: 'approve' | 'disburse') => {
+    setWorkflowMessage('');
+    try {
+      const response = await fetch(`${apiBaseUrl}/loans/${loanId}/${transition}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const envelope = (await response.json()) as ApiEnvelope<{
+        id: number;
+        status: string;
+        disbursedAt?: string;
+        outstandingBalance?: number;
+      }>;
+      if (!response.ok || !envelope.success || !envelope.data) {
+        throw new Error(envelope.message || `Unable to ${transition} loan.`);
+      }
+
+      const updatedLoan = envelope.data;
+      setLoans((current) => current.map((loan) => loan.id === loanId
+        ? {
+          ...loan,
+          status: updatedLoan.status,
+          disbursedAt: updatedLoan.disbursedAt ?? loan.disbursedAt,
+          outstanding: updatedLoan.outstandingBalance ?? loan.outstanding,
+        }
+        : loan));
+      setWorkflowMessage(envelope.message);
+    } catch (requestError) {
+      setWorkflowMessage(requestError instanceof Error ? requestError.message : `Unable to ${transition} loan.`);
+    }
+  };
+
+  const handleScheduleView = async (loanId: number) => {
+    setScheduleLoading(true);
+    setWorkflowMessage('');
+    try {
+      const response = await fetch(`${apiBaseUrl}/loans/${loanId}/schedule`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const envelope = (await response.json()) as ApiEnvelope<LoanInstallment[]>;
+      if (!response.ok || !envelope.success || !envelope.data) {
+        throw new Error(envelope.message || 'Unable to load repayment schedule.');
+      }
+
+      setSelectedSchedule({ loanId, entries: envelope.data });
+    } catch (requestError) {
+      setWorkflowMessage(requestError instanceof Error ? requestError.message : 'Unable to load repayment schedule.');
+    } finally {
+      setScheduleLoading(false);
+    }
+  };
+
+  const handleRepayment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (selectedLoanForPayment === null) {
+      return;
+    }
+
+    setRepaymentSubmitting(true);
+    setWorkflowMessage('');
+    const key = repaymentKey || crypto.randomUUID();
+    setRepaymentKey(key);
+    try {
+      const response = await fetch(`${apiBaseUrl}/loans/${selectedLoanForPayment}/payments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': key,
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ amount: Number(repaymentAmount) }),
+      });
+      const envelope = (await response.json()) as ApiEnvelope<{
+        loanId: number;
+        amount: number;
+        outstandingBalance: number;
+        status: string;
+      }>;
+      if (!response.ok || !envelope.success || !envelope.data) {
+        throw new Error(envelope.message || 'Unable to post repayment.');
+      }
+
+      setLoans((current) => current.map((loan) => loan.id === selectedLoanForPayment
+        ? { ...loan, outstanding: envelope.data!.outstandingBalance, status: envelope.data!.status }
+        : loan));
+      let resultMessage = envelope.message;
+      if (selectedSchedule?.loanId === selectedLoanForPayment) {
+        try {
+          const scheduleResponse = await fetch(`${apiBaseUrl}/loans/${selectedLoanForPayment}/schedule`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const scheduleEnvelope = (await scheduleResponse.json()) as ApiEnvelope<LoanInstallment[]>;
+          if (!scheduleResponse.ok || !scheduleEnvelope.success || !scheduleEnvelope.data) {
+            throw new Error(scheduleEnvelope.message || 'Unable to refresh the repayment schedule.');
+          }
+          setSelectedSchedule({ loanId: selectedLoanForPayment, entries: scheduleEnvelope.data });
+        } catch (scheduleError) {
+          const scheduleMessage = scheduleError instanceof Error
+            ? scheduleError.message
+            : 'Schedule refresh failed.';
+          resultMessage = `${envelope.message} ${scheduleMessage}`;
+        }
+      }
+
+      setWorkflowMessage(resultMessage);
+      setRepaymentAmount('');
+      setRepaymentKey('');
+    } catch (requestError) {
+      setWorkflowMessage(requestError instanceof Error ? requestError.message : 'Unable to post repayment.');
+    } finally {
+      setRepaymentSubmitting(false);
+    }
+  };
+
   return (
     <div className="page-card panel">
       <div className="page-toolbar">
@@ -1194,6 +1809,8 @@ function LoansPage({ token }: { token: string }) {
         </button>
       </div>
 
+      {workflowMessage && <div className="empty-state">{workflowMessage}</div>}
+
       {isFormOpen && (
         <form className="loan-form" onSubmit={handleCreateLoan}>
           <div className="loan-form-grid">
@@ -1215,7 +1832,7 @@ function LoansPage({ token }: { token: string }) {
             </label>
             <label>
               Interest rate (%)
-              <input type="number" min="0" step="0.01" value={formState.interestRate} onChange={(event) => setFormState((current) => ({ ...current, interestRate: event.target.value }))} required />
+              <input type="number" min="0" max="100" step="0.01" value={formState.interestRate} onChange={(event) => setFormState((current) => ({ ...current, interestRate: event.target.value }))} required />
             </label>
             <label>
               Tenure (months)
@@ -1224,10 +1841,7 @@ function LoansPage({ token }: { token: string }) {
             <label>
               Status
               <select value={formState.status} onChange={(event) => setFormState((current) => ({ ...current, status: event.target.value }))}>
-                <option value="Approved">Approved</option>
-                <option value="Disbursed">Disbursed</option>
                 <option value="Pending">Pending</option>
-                <option value="Rejected">Rejected</option>
               </select>
             </label>
           </div>
@@ -1257,6 +1871,7 @@ function LoansPage({ token }: { token: string }) {
               <th>Outstanding</th>
               <th>Rate</th>
               <th>Status</th>
+              <th>Workflow</th>
             </tr>
           </thead>
           <tbody>
@@ -1274,16 +1889,95 @@ function LoansPage({ token }: { token: string }) {
                   currency: 'BDT',
                   maximumFractionDigits: 0,
                 }).format(loan.outstanding)}</td>
-                <td>{loan.interestRate}%</td>
+                <td>{(loan.interestRate * 100).toFixed(2)}%</td>
                 <td>
                   <span className={`status-tag ${loan.status.toLowerCase().replace(/\s+/g, '-')}`}>
                     {loan.status}
                   </span>
                 </td>
+                <td>
+                  {loan.status === 'Pending' && (
+                    <button type="button" onClick={() => void handleLoanTransition(loan.id, 'approve')}>Approve</button>
+                  )}
+                  {loan.status === 'Approved' && (
+                    <button type="button" onClick={() => void handleLoanTransition(loan.id, 'disburse')}>Disburse</button>
+                  )}
+                  {(loan.status === 'Disbursed' || loan.status === 'Overdue') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedLoanForPayment(loan.id);
+                        setRepaymentAmount('');
+                        setRepaymentKey('');
+                      }}
+                    >
+                      Record payment
+                    </button>
+                  )}
+                  <button type="button" disabled={scheduleLoading} onClick={() => void handleScheduleView(loan.id)}>
+                    {scheduleLoading && selectedSchedule?.loanId === loan.id ? 'Loading…' : 'Schedule'}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+      )}
+      {selectedLoanForPayment !== null && (
+        <form className="loan-form" onSubmit={handleRepayment}>
+          <div className="panel-header">
+            <h3>Record repayment — loan #{selectedLoanForPayment}</h3>
+            <button type="button" onClick={() => setSelectedLoanForPayment(null)}>Cancel</button>
+          </div>
+          <label>
+            Payment amount
+            <input
+              type="number"
+              min="0.01"
+              max={loans.find((loan) => loan.id === selectedLoanForPayment)?.outstanding ?? undefined}
+              step="0.01"
+              value={repaymentAmount}
+              onChange={(event) => {
+                setRepaymentAmount(event.target.value);
+                setRepaymentKey('');
+              }}
+              required
+            />
+          </label>
+          <div className="form-actions">
+            <button type="submit" disabled={repaymentSubmitting}>
+              {repaymentSubmitting ? 'Posting…' : 'Post repayment'}
+            </button>
+          </div>
+        </form>
+      )}
+      {selectedSchedule && (
+        <section className="panel">
+          <div className="panel-header">
+            <h3>Repayment schedule — loan #{selectedSchedule.loanId}</h3>
+            <button type="button" onClick={() => setSelectedSchedule(null)}>Close</button>
+          </div>
+          {selectedSchedule.entries.length === 0 ? (
+            <div className="empty-state">This loan has no saved installments.</div>
+          ) : (
+            <table className="member-table">
+              <thead><tr><th>#</th><th>Due date</th><th>Principal</th><th>Interest</th><th>Total</th><th>Balance</th><th>Status</th></tr></thead>
+              <tbody>
+                {selectedSchedule.entries.map((installment) => (
+                  <tr key={installment.installmentNumber}>
+                    <td>{installment.installmentNumber}</td>
+                    <td>{installment.dueDate ? new Date(installment.dueDate).toLocaleDateString() : 'After disbursement'}</td>
+                    <td>{new Intl.NumberFormat('en-BD', { style: 'currency', currency: 'BDT', maximumFractionDigits: 2 }).format(installment.principal)}</td>
+                    <td>{new Intl.NumberFormat('en-BD', { style: 'currency', currency: 'BDT', maximumFractionDigits: 2 }).format(installment.interest)}</td>
+                    <td>{new Intl.NumberFormat('en-BD', { style: 'currency', currency: 'BDT', maximumFractionDigits: 2 }).format(installment.total)}</td>
+                    <td>{new Intl.NumberFormat('en-BD', { style: 'currency', currency: 'BDT', maximumFractionDigits: 2 }).format(installment.balance)}</td>
+                    <td>{installment.status} (P {installment.principalPaid.toFixed(2)} / I {installment.interestPaid.toFixed(2)})</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
       )}
     </div>
   );
@@ -1389,7 +2083,7 @@ function CollectionsPage({ token }: { token: string }) {
 }
 
 function AccountingPage({ token }: { token: string }) {
-  const [entries, setEntries] = useState<TrialBalanceEntry[]>([]);
+  const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -1408,12 +2102,12 @@ function AccountingPage({ token }: { token: string }) {
           },
         });
 
-        const envelope = (await response.json()) as ApiEnvelope<TrialBalanceEntry[]>;
+        const envelope = (await response.json()) as ApiEnvelope<TrialBalance>;
         if (!response.ok || !envelope.success || !envelope.data) {
           throw new Error(envelope.message || 'Unable to load trial balance.');
         }
 
-        setEntries(envelope.data);
+        setTrialBalance(envelope.data);
       } catch (requestError) {
         if (requestError instanceof Error && requestError.name === 'AbortError') {
           return;
@@ -1436,42 +2130,66 @@ function AccountingPage({ token }: { token: string }) {
           <h2>Accounting</h2>
           <p>Review the live trial balance, ledger movements, and reconciliation status.</p>
         </div>
-        <button type="button">Post entry</button>
+        <button type="button" disabled title="Manual journal entry is not available yet">
+          Post entry
+        </button>
       </div>
 
       {loading ? (
         <div className="empty-state">Loading trial balance…</div>
       ) : error ? (
         <div className="empty-state error-state">{error}</div>
-      ) : entries.length === 0 ? (
+      ) : !trialBalance || trialBalance.accounts.length === 0 ? (
         <div className="empty-state">No accounting entries found.</div>
       ) : (
-        <table className="member-table">
-          <thead>
-            <tr>
-              <th>Account</th>
-              <th>Debit</th>
-              <th>Credit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((entry) => (
-              <tr key={entry.account}>
-                <td>{entry.account}</td>
-                <td>{new Intl.NumberFormat('en-BD', {
-                  style: 'currency',
-                  currency: 'BDT',
-                  maximumFractionDigits: 0,
-                }).format(entry.debit)}</td>
-                <td>{new Intl.NumberFormat('en-BD', {
-                  style: 'currency',
-                  currency: 'BDT',
-                  maximumFractionDigits: 0,
-                }).format(entry.credit)}</td>
+        <>
+          <p className={trialBalance.isBalanced ? 'success-state' : 'error-state'}>
+            {trialBalance.isBalanced ? 'Debits and credits are balanced.' : 'Trial balance is out of balance.'}
+          </p>
+          <table className="member-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Account</th>
+                <th>Type</th>
+                <th>Debit</th>
+                <th>Credit</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {trialBalance.accounts.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{entry.code}</td>
+                  <td>{entry.account}</td>
+                  <td>{entry.accountType}</td>
+                  <td>{new Intl.NumberFormat('en-BD', {
+                    style: 'currency',
+                    currency: 'BDT',
+                    maximumFractionDigits: 0,
+                  }).format(entry.debit)}</td>
+                  <td>{new Intl.NumberFormat('en-BD', {
+                    style: 'currency',
+                    currency: 'BDT',
+                    maximumFractionDigits: 0,
+                  }).format(entry.credit)}</td>
+                </tr>
+              ))}
+              <tr>
+                <th colSpan={3}>Total</th>
+                <th>{new Intl.NumberFormat('en-BD', {
+                  style: 'currency',
+                  currency: 'BDT',
+                  maximumFractionDigits: 0,
+                }).format(trialBalance.totalDebits)}</th>
+                <th>{new Intl.NumberFormat('en-BD', {
+                  style: 'currency',
+                  currency: 'BDT',
+                  maximumFractionDigits: 0,
+                }).format(trialBalance.totalCredits)}</th>
+              </tr>
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );
@@ -1643,10 +2361,14 @@ function AuditPage({ token }: { token: string }) {
   );
 }
 
-function SettingsPage({ token }: { token: string }) {
+function SettingsPage({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1683,6 +2405,45 @@ function SettingsPage({ token }: { token: string }) {
     void loadSettings();
     return () => abortController.abort();
   }, [token]);
+
+  const handlePasswordChange = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setPasswordError('');
+    setPasswordSuccess('');
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError('New password and confirmation do not match.');
+      return;
+    }
+
+    setPasswordSubmitting(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/auth/change-password`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      });
+      const envelope = (await response.json()) as ApiEnvelope<{ signInRequired: boolean }>;
+      if (!response.ok || !envelope.success || !envelope.data) {
+        throw new Error(envelope.message || 'Unable to change password.');
+      }
+
+      setPasswordSuccess(envelope.message);
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      window.setTimeout(onLogout, 1200);
+    } catch (requestError) {
+      setPasswordError(requestError instanceof Error ? requestError.message : 'Unable to change password.');
+    } finally {
+      setPasswordSubmitting(false);
+    }
+  };
 
   return (
     <div className="page-card panel">
@@ -1728,6 +2489,30 @@ function SettingsPage({ token }: { token: string }) {
       ) : (
         <div className="empty-state">No settings available.</div>
       )}
+
+      <section className="password-change-section">
+        <h3>Change password</h3>
+        <p>Use at least 12 characters with uppercase, lowercase, a number, and a symbol. Changing your password signs out existing sessions.</p>
+        <form className="password-change-form" onSubmit={handlePasswordChange}>
+          <label>
+            Current password
+            <input type="password" autoComplete="current-password" value={passwordForm.currentPassword} onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))} required maxLength={256} />
+          </label>
+          <label>
+            New password
+            <input type="password" autoComplete="new-password" value={passwordForm.newPassword} onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))} required minLength={12} maxLength={256} />
+          </label>
+          <label>
+            Confirm new password
+            <input type="password" autoComplete="new-password" value={passwordForm.confirmPassword} onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))} required minLength={12} maxLength={256} />
+          </label>
+          {passwordError && <div className="empty-state error-state" role="alert">{passwordError}</div>}
+          {passwordSuccess && <div className="empty-state success-state" role="status">{passwordSuccess}</div>}
+          <div className="form-actions">
+            <button type="submit" disabled={passwordSubmitting}>{passwordSubmitting ? 'Updating…' : 'Change password'}</button>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }

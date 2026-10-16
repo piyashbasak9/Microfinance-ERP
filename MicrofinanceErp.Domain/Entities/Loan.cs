@@ -26,4 +26,7 @@ public class Loan
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DisbursedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
+
+    public ICollection<LoanInstallment> Installments { get; set; } = new List<LoanInstallment>();
+    public ICollection<LoanPayment> Payments { get; set; } = new List<LoanPayment>();
 }

@@ -15,34 +15,36 @@
 
 ### Local authentication configuration
 
-The API requires a JWT signing secret and can create its first administrator at startup from environment variables. Provide these values through your local secret manager or shell environment; do not commit them:
+The API requires a database connection string and a JWT signing secret. Provide them through .NET user-secrets locally or environment variables in a deployment; neither is stored in `appsettings.json`:
 
 | Variable | Required | Purpose |
 |---|---|---|
+| `ConnectionStrings__Default` | Yes | PostgreSQL connection string |
 | `Jwt__SigningKey` | Yes | Random signing secret of at least 32 bytes |
 | `BootstrapAdmin__Email` | Optional | Initial administrator email |
 | `BootstrapAdmin__Password` | With email | Initial password (at least 12 characters) |
 | `BootstrapAdmin__FullName` | With email | Initial administrator's display name |
 
-The bootstrap account is created only when its normalized email does not already exist. Login lockout starts after five failed attempts and lasts 15 minutes. Development client requests use the Vite `/api` proxy; set `VITE_API_PROXY_TARGET` when the API is not listening at `http://localhost:5143`. Access tokens are kept in memory and expire after 15 minutes.
+The bootstrap account is created only when its normalized email does not already exist. Login lockout starts after five failed attempts and lasts 15 minutes. Production must also set `Cors__AllowedOrigins__0` (and additional indexed origins as needed) to the exact HTTPS client origins. Development client requests use the Vite `/api` proxy; set `VITE_API_PROXY_TARGET` when the API is not listening at `http://localhost:5143`. Access tokens are kept in memory and expire after 15 minutes.
+
+Login requests are rate-limited per remote IP (10 attempts per 60 seconds by default); account lockout is independently enforced after five bad passwords for 15 minutes. Authenticated requests check that the staff account is still active, so deactivation invalidates existing access tokens on their next request. Behind a reverse proxy, configure ASP.NET Core forwarded headers only for known trusted proxies before relying on client IP rate limiting.
 
 For Docker Compose, also set `POSTGRES_PASSWORD` and `JWT_SIGNING_KEY` in the shell before starting the stack. Compose fails fast if either is missing; keep both out of source control.
 
 ### Implementation status (2026-10-17)
 
-The README describes the intended version-1 system; it is not a claim that every listed feature is already implemented. The repository currently has initial authentication, member and loan API slices, and the savings account/transaction slice. Savings endpoints persist deposits and withdrawals, enforce minimum balances and member/account status rules, serialize balance changes, and require idempotency keys. Accounting posting is not yet wired to these transactions.
+The README describes the intended version-1 system; it is not a claim that every listed feature is already implemented. Authentication includes IP rate limiting, account lockout, live active-account checks, current-password-confirmed password changes, rotating hashed refresh tokens, one-use SMTP password-reset links, staff account and role administration, and database-backed permissions. Access tokens are short-lived and kept in browser memory; refresh tokens are carried only in an `httpOnly` cookie. Role and account changes revoke affected sessions, and permissions are checked against the database on each protected request. Persisted member, savings, loan, dashboard, and audit endpoints enforce the staff user's branch claim; only the Super Admin role can access all branches. Loan creation starts Pending; approval and disbursement are separate manager-authorized, row-locked transitions, and installment due dates activate only at disbursement. The calculated schedule is saved atomically with the loan and audit event, and schedule reads are branch-scoped. Repayments now use a per-loan idempotency key, a locked loan row, scheduled interest-then-principal allocation, and atomic payment/installment/outstanding-balance/audit updates; loan payments cannot exceed the outstanding balance. The API bounds loan inputs to supported monetary precision, a 0–100% annual rate, and at most 600 monthly installments. The audit trail persists member creation, savings-account opening, savings deposits/withdrawals, loan creation/approval/disbursement/repayment, successful/rejected sign-ins, sign-outs, and password changes/resets. Business-operation audit rows are written atomically with their data changes. Authentication attempts record no submitted identifiers or credentials. Dashboard totals and recent member/loan lists are read from persisted data; collection, overdue, and PAR figures remain unavailable until their supporting workflows exist. Savings endpoints persist deposits and withdrawals, enforce minimum balances and member/account status rules, serialize balance changes, and require idempotency keys. A system chart of accounts and balanced journal entries now back savings deposits/withdrawals and loan repayments; the trial balance is calculated from persisted journal lines and scoped by branch. The initial system accounts and posting rules are intentionally minimal and require review against the organization's accounting policy before live use.
 
 **Remaining work before production:**
 
-- Complete authentication lifecycle: refresh/revocation, password reset/change, user and role administration, database-backed page/action permissions, and rate limiting.
-- Implement branch hierarchy, authorized branch scoping, centers, groups, staff/field officers, and member profiles with KYC, document/photo storage, status history, paging, and audit.
-- Complete savings products, account lifecycle, statements, reversal transactions, interest calculation/posting, maker-checker approval, and automatic balanced ledger entries.
-- Replace the preliminary loan create endpoint with product-based applications, eligibility, approval workflow, disbursement, persisted schedules, repayments/allocation, overdue/PAR, settlement, rescheduling, write-off, and accounting postings.
+- Complete branch isolation across all modules, add branch hierarchy and multi-branch grants, and implement centers, groups, staff/field officers, and member profiles with KYC, document/photo storage, status history, paging, and audit. Current claim-based scoping covers the persisted member, savings, and loan endpoints only.
+- Complete savings products, account lifecycle, statements, reversal transactions, interest calculation/posting, and maker-checker approval. Savings movements currently post to a minimal set of default accounts without reversal or reconciliation workflows.
+- Replace the preliminary loan workflow with product-based applications, eligibility, approval limits/maker-checker, external disbursement reconciliation, overdue/PAR, settlement, rescheduling, and write-off. The initial pending→approved→disbursed and repayment allocation paths are present; loan disbursement is not yet posted to the ledger.
 - Replace collection mock data with generated sheets, item-level collection, submission, cash reconciliation, idempotent posting, reversals, and ledger integration.
-- Implement a chart of accounts, fiscal periods, immutable journal entries, double-entry validation, voucher numbering, reconciliation, and real financial statements.
-- Replace mock dashboard, report, audit, and settings data with persisted, branch-scoped data; add exports and compliance/audit trails.
-- Finish the frontend route/permission model, modal workflows, accessible feedback, responsive data tables, and the remaining module screens.
-- Add API integration and end-to-end tests for financial posting, idempotency, concurrency, authorization, and branch isolation; configure CI, dependency scanning, production migrations, structured logging/monitoring, backups, deployment, and recovery procedures.
+- Expand the minimal seeded chart of accounts with controlled account management, fiscal periods, immutable/reversible journal workflows, voucher numbering, reconciliation, and full financial statements. Current double-entry checks and the trial balance cover only savings and loan repayment postings.
+- Replace mock report and settings data with persisted, branch-scoped data; expand audit coverage to updates, approvals, and admin changes; complete dashboard collection/arrears indicators and add exports and compliance tooling.
+- Complete the remaining frontend module workflows, modal interactions, accessible feedback, and responsive data tables.
+- Add API integration and end-to-end tests for authentication lifecycle, role permissions, financial posting, idempotency, concurrency, authorization, and branch isolation; configure CI, dependency scanning, production migrations, structured logging/monitoring, backups, deployment, and recovery procedures.
 
 ---
 
@@ -199,7 +201,7 @@ Roles are fully configurable. The table shows the **suggested default roles** th
 | Language | C# |
 | ORM | Entity Framework Core (code-first migrations) |
 | Database | SQL Server by default |
-| Authentication | ASP.NET Core Identity for users and password hashing, JWT access tokens, rotating refresh tokens |
+| Authentication | Staff account and role models, ASP.NET Core Identity password hashing, JWT access tokens, rotating refresh tokens |
 | Authorization | Custom permission-based policies (see [section 11](#11-access-control-rbac-and-security)) |
 | Validation | FluentValidation |
 | Mapping | Mapster or hand-written mappers |
@@ -309,7 +311,7 @@ Each module lists its features, key rules, and main screens. All create and edit
 
 **Features**
 
-- Login with username or email and password; logout
+- Login with email and password; logout
 - Forgot password and reset password through an emailed, time-limited, single-use link
 - Change password (requires the current password)
 - Forced password change on first login and after an admin reset
@@ -318,12 +320,12 @@ Each module lists its features, key rules, and main screens. All create and edit
 
 **Rules**
 
-- Password policy is configurable (minimum length, upper and lower case, digit, symbol, history of the last N passwords, expiry in days).
+- Current password policy requires at least 12 characters with uppercase, lowercase, number, and symbol; password history and expiry are not implemented.
 - Account locks after a configurable number of failed attempts (default 5) for a configurable time (default 15 minutes).
-- Logout revokes the refresh token on the server and clears the session in the browser, including other open tabs.
-- Every login, failed login, logout, lockout and password change is audited.
+- Logout revokes the presented refresh token on the server and clears the session in the current browser tab.
+- Successful and failed login, logout, lockout-triggering sign-in attempts, and password changes/resets are audited.
 
-**Screens**: `/login`, `/forgot-password`, `/reset-password`, `/change-password`, `/admin/users`, `/admin/roles`
+**Screens**: `/login`, `/reset-password` (request or complete a reset), `/settings` (change password), `/admin` (staff and role administration)
 
 ### 7.2 Branches
 
@@ -859,30 +861,30 @@ sequenceDiagram
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `Users` (ASP.NET Core Identity, extended) | Accounts | FullName, BranchId, StaffId, IsActive, MustChangePassword, PasswordChangedAt, LastLoginAt |
-| `Roles` | Role definitions | Name, Description, IsSystem, IsActive |
-| `UserRoles` | Role assigned to user | UserId, RoleId |
-| `UserBranches` | Extra branches a user may access | UserId, BranchId, IsDefault |
-| `Pages` | Every screen in the app | Code, Name, Module, **Url**, ParentId, DisplayOrder, Icon, ShowInMenu |
-| `RolePagePermissions` | What a role may do on a page | RoleId, PageId, CanView, CanCreate, CanEdit, CanDelete, CanApprove, CanExport |
-| `RefreshTokens` | Rotating refresh tokens (stored hashed) | UserId, TokenHash, ExpiresAt, RevokedAt, ReplacedByTokenHash, CreatedByIp |
+| `StaffUsers` | Staff accounts and their single assigned role | Email, NormalizedEmail, Role, BranchId, IsActive, SecurityStamp, PasswordChangedAt, LastLoginAt |
+| `AccessRoles` | Built-in and custom role definitions | Name, NormalizedName, Description, IsSystemRole, IsActive |
+| `PermissionDefinitions` | Supported page/action permission codes | Code, Module, Description |
+| `RolePermissions` | Permissions granted to a role | AccessRoleName, PermissionCode |
+| `RefreshTokens` | Rotating refresh sessions (only hashes are stored) | StaffUserId, TokenHash, SecurityStamp, ExpiresAt, RevokedAt, ReplacedByTokenHash |
+| `PasswordResetTokens` | One-use, time-limited reset links (only hashes are stored) | StaffUserId, TokenHash, ExpiresAt, UsedAt |
 
-`Pages` is **seeded by the application** from a single source of truth in code, so a new screen cannot be shipped without a permission entry.
+The initial roles and permission definitions are seeded by a single catalog in code. Custom roles can be created and granted supported permission codes; built-in role assignments are fixed.
 
 ### 11.3 Permission codes
 
-A permission is `Module.Page.Action`, for example:
+A permission is a page or action code, for example:
 
 ```
-Members.Members.View
-Loans.Applications.Create
-Loans.Applications.Approve
-Accounting.JournalEntries.Edit
-Reports.Loans.Export
-Admin.Roles.Edit
+Members.Read
+Members.Create
+Loans.Create
+Loans.Approve
+Loans.Disburse
+Security.Users.Manage
+Security.Roles.Manage
 ```
 
-A role's **allowed URLs** are the pages where `CanView = true`. The other flags control buttons and API actions.
+The current catalog includes read permissions for each implemented module and action permissions for member, savings, and loan operations. Unimplemented modules and finer-grained actions must be added to the catalog before they can be granted.
 
 ### 11.4 Page registry (seeded)
 
@@ -909,48 +911,49 @@ The API is the real gatekeeper. The React app only hides what a user cannot use.
 
 ```csharp
 [ApiController]
-[Route("api/v1/loans/applications")]
-[Authorize]
+[Route("api/v1/loans")]
 public class LoanApplicationsController : ControllerBase
 {
     [HttpGet]
-    [HasPermission("Loans.Applications.View")]
+    [RequirePermission(AccessControlCatalog.LoansRead)]
     public async Task<IActionResult> List([FromQuery] LoanApplicationQuery query)
         => Ok(await _service.ListAsync(query));
 
     [HttpPost("{id:long}/approve")]
-    [HasPermission("Loans.Applications.Approve")]
+    [RequirePermission(AccessControlCatalog.LoansApprove)]
     public async Task<IActionResult> Approve(long id, ApproveLoanRequest request)
         => Ok(await _service.ApproveAsync(id, request));
 }
 ```
 
-`HasPermissionAttribute` derives from `AuthorizeAttribute` and sets a policy name from the permission code. A custom `IAuthorizationPolicyProvider` builds the policy on demand, and a `PermissionHandler` asks `IPermissionService` whether the current user's role holds the permission.
+`RequirePermissionAttribute` derives from `AuthorizeAttribute` and names a registered policy for the permission code. `PermissionAuthorizationHandler` checks that the active user's current role has that permission in the database.
 
-- Permissions are **read from the database and cached** (invalidated when a role changes), not trusted from the JWT. A role change takes effect immediately, without waiting for the token to expire.
-- The JWT carries only the user id, role ids, and the default branch id.
+- Permissions are read from the database for each protected request, not trusted from the JWT; a role permission change takes effect immediately.
+- The JWT carries the user id, role, display identity, security stamp, and optional branch id. The API checks the account's active state and stamp on every request.
+- Staff accounts can be created, edited, assigned an active branch and role, and deactivated by an administrator. At least one active Super Admin must remain; users cannot change their own role or active status.
+- Custom roles can be created and their permission sets changed. The built-in roles and security-administration grants are protected from editing or delegation.
 
 ### 11.6 Session and token handling
 
 | Item | Design |
 |---|---|
-| Access token | JWT, short lifetime (default 15 minutes), kept **in memory** in the browser |
-| Refresh token | Random value, long lifetime (default 7 days), stored **hashed** in the database, sent as an `httpOnly`, `Secure`, `SameSite=Strict` cookie |
-| Rotation | Every refresh issues a new refresh token and revokes the old one. Reuse of a revoked token revokes the whole token family. |
-| Logout | Revokes the refresh token on the server, clears client state, notifies other tabs |
-| Session timeout | Idle timeout from Settings; the user is warned shortly before being logged out |
-| Expired session | One automatic refresh attempt; if it fails the user is redirected to `/login?returnUrl=...` with a message |
+| Access token | JWT, 15-minute lifetime, kept **in memory** in the browser; account and security-stamp checks occur on every request |
+| Refresh token | Random value, 7-day lifetime, stored **hashed** in the database, sent as an `httpOnly`, `SameSite=Strict` cookie; `Secure` is enabled outside Development |
+| Rotation | Every refresh issues a new token and revokes the old one. Reuse of a rotated token revokes all active refresh sessions for that user. |
+| Logout | Revokes the presented refresh token and clears the cookie and in-memory client session; an issued access token can remain valid for up to 15 minutes |
+| Session renewal | The browser renews the access token shortly before expiry; failure returns the user to sign-in |
+| Password reset | Generic request response prevents email enumeration; an SMTP link contains a one-use token stored only as a hash and expires after 30 minutes |
 
 ### 11.7 Security checklist
 
 | Area | Control |
 |---|---|
-| Passwords | Hashed with the ASP.NET Core Identity password hasher (PBKDF2). Policy, history, lockout and expiry configurable. |
+| Passwords | Hashed with the ASP.NET Core Identity password hasher (PBKDF2); at least 12 characters with uppercase, lowercase, number, and symbol; lockout is configurable |
 | Transport | HTTPS only, HSTS, secure cookies |
 | Brute force | Lockout plus rate limiting on login, forgot-password and refresh endpoints |
 | Input | Server-side validation on every request; EF Core parameterized queries only |
 | XSS | React escapes by default; no `dangerouslySetInnerHTML`; a restrictive Content Security Policy |
-| CSRF | Access token in the `Authorization` header; refresh cookie is `SameSite=Strict` and the refresh endpoint also requires a custom header |
+| CSRF | Access token in the `Authorization` header; refresh/logout require an allowed `Origin` and the refresh cookie is `SameSite=Strict` |
 | CORS | Explicit allow-list of origins, no wildcard |
 | File uploads | Size limit, content-type check by file signature, random stored file name, stored outside the web root, served through an authorized endpoint |
 | Secrets | Never in source control: `dotnet user-secrets` locally, environment variables or a secret manager in production |
@@ -1101,7 +1104,7 @@ The React app shows `message` in the top-middle toast and maps `errors` onto the
 |---|---|---|
 | 200 / 201 | Success / created | Success toast, refresh list |
 | 400 | Validation or business rule failed | Error toast, field errors on the form |
-| 401 | Not logged in or token expired | Try refresh once, else redirect to login |
+| 401 | Not logged in or token expired | Sign in again if the automatic pre-expiry refresh failed |
 | 403 | Logged in but not permitted | Error toast or `/403` page |
 | 404 | Not found (also used for out-of-branch records) | Not-found message |
 | 409 | Concurrency conflict or duplicate | Error toast asking the user to reload |
@@ -1113,8 +1116,8 @@ The React app shows `message` in the top-middle toast and maps `errors` onto the
 
 | Module | Endpoints |
 |---|---|
-| Auth | `POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `GET /auth/me`, `POST /auth/change-password`, `POST /auth/forgot-password`, `POST /auth/reset-password` |
-| Users and roles | `GET/POST /users`, `GET/PUT /users/{id}`, `PUT /users/{id}/role`, `PUT /users/{id}/status`, `POST /users/{id}/reset-password`, `GET/POST /roles`, `PUT/DELETE /roles/{id}`, `GET /pages`, `GET/PUT /roles/{id}/permissions` |
+| Auth | `POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `GET /auth/me`, `POST /auth/change-password`, `POST /auth/password/forgot`, `POST /auth/password/reset` |
+| Users and roles | `GET/POST /admin/users`, `PUT /admin/users/{userId}`, `GET /admin/roles`, `POST /admin/roles`, `PUT /admin/roles/{roleName}/permissions`, `GET /admin/permissions` |
 | Branches | `GET/POST /branches`, `GET /branches/tree`, `GET/PUT /branches/{id}`, `PUT /branches/{id}/status`, `PUT /branches/{id}/parent` |
 | Members | `GET/POST /members`, `GET/PUT /members/{id}`, `PUT /members/{id}/status`, `POST/GET /members/{id}/photo`, `GET/POST /members/{id}/kyc`, `PUT /members/{id}/kyc/{docId}/verify` |
 | Savings | `GET/POST /savings/products`, `GET/POST /savings/accounts`, `GET /savings/accounts/{id}/statement`, `GET/POST /savings/transactions`, `POST /savings/transactions/{id}/reverse` |
@@ -1143,7 +1146,7 @@ The React app shows `message` in the top-middle toast and maps `errors` onto the
 
 | Module | Main tables |
 |---|---|
-| Identity and access | Users, Roles, UserRoles, UserBranches, Pages, RolePagePermissions, RefreshTokens, PasswordHistory |
+| Identity and access | StaffUsers, AccessRoles, PermissionDefinitions, RolePermissions, RefreshTokens, PasswordResetTokens |
 | Organization | Branches, Centers, Groups, Staff, HolidayCalendar |
 | Members | Members, MemberNominees, MemberKycDocuments, MemberStatusHistory |
 | Savings | SavingsProducts, SavingsAccounts, SavingsAccountMembers (group contributions), SavingsTransactions, SavingsInterestPostings |
@@ -1255,8 +1258,7 @@ export function PermissionRoute({ page }: { page: string }) {
 // routes/AppRoutes.tsx (shape)
 <Routes>
   <Route path="/login" element={<LoginPage />} />
-  <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-  <Route path="/reset-password" element={<ResetPasswordPage />} />
+  <Route path="/reset-password" element={<PasswordResetPage />} />
 
   <Route element={<ProtectedRoute />}>                    {/* must be logged in */}
     <Route element={<AppLayout />}>
@@ -1280,7 +1282,7 @@ export function PermissionRoute({ page }: { page: string }) {
 - After login, the app opens `returnUrl` **only if** it is a relative path (starts with a single `/`) and the user's role allows it. Otherwise it opens the dashboard. This prevents open-redirect abuse.
 - The route registry is the single source mapping URL → page code, shared with the menu builder, so the menu and the routes cannot drift apart.
 - The sidebar shows only pages where the role has `CanView`. Empty module groups are hidden.
-- On logout, the session is cleared, a `BroadcastChannel` message logs out other tabs, and the user lands on `/login`.
+- On logout, the current tab clears its in-memory session, revokes the refresh token, and returns to `/login`.
 
 ### 16.3 Permission-aware UI
 
@@ -1400,10 +1402,10 @@ The same colors are exposed as CSS variables (`--color-primary` and so on) for c
 
 ### 16.7 HTTP layer
 
-One Axios instance handles cross-cutting behaviour:
+The current client uses `fetch` for API requests:
 
-- Adds the access token to every request.
-- On **401**: runs a single shared refresh call (parallel requests wait for it), retries the original request once, and if refresh fails clears the session, redirects to `/login?returnUrl=...`, and shows "Your session has expired. Please sign in again."
+- Sends the in-memory access token with authenticated requests.
+- Before access-token expiry: makes one refresh request; if it fails the in-memory session is cleared and the user returns to sign-in. A failed individual API request is not automatically retried yet.
 - On **403**: error toast "You do not have permission to do that."
 - On **409**: error toast asking the user to reload because the record changed.
 - On **network failure or 5xx**: generic error toast, including the `traceId` so support can find the log entry.
@@ -1452,9 +1454,9 @@ The details users notice every day. These apply to every screen.
 
 | Tool | Notes |
 |---|---|
-| .NET SDK | The version matching the project's `TargetFramework` |
+| .NET SDK | .NET 8 SDK |
 | Node.js | Current LTS, with npm |
-| SQL Server | Local install, or run it in Docker (see [section 21](#21-deployment-and-operations)) |
+| PostgreSQL | Local install, or run it in Docker Compose |
 | Git | |
 | `dotnet-ef` | `dotnet tool install --global dotnet-ef` |
 
@@ -1462,23 +1464,21 @@ The details users notice every day. These apply to every screen.
 
 ```bash
 git clone <TODO-repository-url> MicrofinanceErp
-cd MicrofinanceErp/src/MicrofinanceErp.Api
+cd MicrofinanceErp
 
-# Local secrets (never commit these)
-dotnet user-secrets init
-dotnet user-secrets set "ConnectionStrings:Default" "Server=localhost,1433;Database=MicrofinanceErp;User Id=sa;Password=<your-password>;TrustServerCertificate=True"
-dotnet user-secrets set "Jwt:Key" "<random-string-of-at-least-32-characters>"
-dotnet user-secrets set "Seed:AdminEmail" "<admin-email>"
-dotnet user-secrets set "Seed:AdminPassword" "<strong-temporary-password>"
+# Store local secrets outside the repository
+dotnet user-secrets set "ConnectionStrings:Default" "Host=localhost;Port=5432;Database=microfinance_erp;Username=postgres;Password=<local-password>" --project MicrofinanceErp.Api
+dotnet user-secrets set "Jwt:SigningKey" "<random-secret-of-at-least-32-bytes>" --project MicrofinanceErp.Api
+dotnet user-secrets set "BootstrapAdmin:Email" "<admin-email>" --project MicrofinanceErp.Api
+dotnet user-secrets set "BootstrapAdmin:Password" "<strong-temporary-password>" --project MicrofinanceErp.Api
+dotnet user-secrets set "BootstrapAdmin:FullName" "<administrator-name>" --project MicrofinanceErp.Api
 
-# Create or update the database
-dotnet ef database update --project ../MicrofinanceErp.Infrastructure --startup-project .
-
-# Run
-dotnet run
+# Apply reviewed migrations and run
+dotnet ef database update --project MicrofinanceErp.Infrastructure --startup-project MicrofinanceErp.Api
+dotnet run --project MicrofinanceErp.Api
 ```
 
-The API starts on the URL printed in the console. In development, Swagger is available at `/swagger`.
+The API starts on the URL printed in the console. In development, Swagger is available at `/swagger`. Production migrations must be applied as a deployment step; the API does not migrate the schema automatically outside Development.
 
 ### 18.3 Frontend
 
@@ -1493,13 +1493,7 @@ Open the address Vite prints (usually `http://localhost:5173`). Opening any page
 
 ### 18.4 First run and seed data
 
-On first start the application seeds:
-
-- The default roles from [section 4](#4-users-and-roles) with sensible permission sets
-- The page registry (every URL in [section 11.4](#114-page-registry-seeded))
-- A starter chart of accounts and the system account mappings
-- Default business rules, KYC document types and number formats
-- A **Super Admin** user from `Seed:AdminEmail` and `Seed:AdminPassword`. The user is forced to change the password at first login. **Do not seed a fixed, well-known password.**
+The current first-run bootstrap creates default branches and, when configured, one Super Admin. Roles, a page registry, chart of accounts, business rules, KYC document types, and forced password changes are not implemented yet. Configure the initial administrator with the `BootstrapAdmin:*` secrets above; use a unique strong password and rotate it after first login.
 
 ### 18.5 Useful commands
 
@@ -1517,23 +1511,28 @@ On first start the application seeds:
 
 ### 19.1 Backend (`appsettings.json`, user secrets, or environment variables)
 
-Environment variables use a double underscore for nesting, for example `Jwt__Key`.
+Environment variables use a double underscore for nesting, for example `Jwt__SigningKey`.
 
 | Key | Purpose | Example or default |
 |---|---|---|
 | `ConnectionStrings:Default` | Database connection | *secret* |
 | `Jwt:Issuer`, `Jwt:Audience` | Token validation | your API and app names |
-| `Jwt:Key` | Signing key | *secret, 32+ characters* |
-| `Jwt:AccessTokenMinutes` | Access token lifetime | `15` |
-| `Jwt:RefreshTokenDays` | Refresh token lifetime | `7` |
-| `Cors:AllowedOrigins` | Allowed browser origins | `["http://localhost:5173"]` |
+| `Jwt:SigningKey` | Signing key | *secret, at least 32 bytes* |
+| `Client:BaseUrl` | Base URL used to build password-reset links | exact client origin |
+| `Cors:AllowedOrigins` | Browser origins allowed to use the refresh cookie | Configure exact HTTPS origins in production; Development defaults to localhost |
 | `Security:LockoutAttempts` | Failed logins before lock | `5` |
 | `Security:LockoutMinutes` | Lock duration | `15` |
+| `Security:LoginRateLimit:PermitLimit` | Login attempts per remote IP window | `10` |
+| `Security:LoginRateLimit:WindowSeconds` | Login rate-limit window | `60` |
+| `Smtp:Host`, `Smtp:Port` | SMTP server for password-reset email | provider host and port |
+| `Smtp:Username`, `Smtp:Password` | SMTP authentication; configure both or neither | *secret* |
+| `Smtp:FromAddress`, `Smtp:FromName` | Password-reset sender identity | verified sender address and display name |
+| `Smtp:EnableSsl` | Require SMTP TLS | `true` |
 | `FileStorage:RootPath` | Where photos and KYC files are stored | a folder outside the web root |
 | `FileStorage:MaxPhotoSizeMb` | Photo size limit | `2` |
-| `Email:*`, `Sms:*` | Gateway settings for notifications | *secret* |
+| `Email:*`, `Sms:*` | Future notification gateway settings | *secret* |
 | `Serilog:*` | Log sinks and levels | console and rolling file |
-| `Seed:AdminEmail`, `Seed:AdminPassword` | First Super Admin | *secret, first run only* |
+| `BootstrapAdmin:Email`, `BootstrapAdmin:Password`, `BootstrapAdmin:FullName` | First Super Admin | *secret, first run only* |
 
 ### 19.2 Frontend (`client/.env`)
 

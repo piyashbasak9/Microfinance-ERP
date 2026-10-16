@@ -22,6 +22,131 @@ namespace MicrofinanceErp.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.AccessRole", b =>
+                {
+                    b.Property<string>("Name")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsSystemRole")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Name");
+
+                    b.HasIndex("NormalizedName")
+                        .IsUnique();
+
+                    b.ToTable("AccessRoles", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Name = "Super Admin",
+                            Description = "Unrestricted system administrator.",
+                            IsActive = true,
+                            IsSystemRole = true,
+                            NormalizedName = "SUPER ADMIN"
+                        },
+                        new
+                        {
+                            Name = "Branch Manager",
+                            Description = "Manages branch operations and approvals.",
+                            IsActive = true,
+                            IsSystemRole = true,
+                            NormalizedName = "BRANCH MANAGER"
+                        },
+                        new
+                        {
+                            Name = "Accountant",
+                            Description = "Manages accounting and financial operations.",
+                            IsActive = true,
+                            IsSystemRole = true,
+                            NormalizedName = "ACCOUNTANT"
+                        },
+                        new
+                        {
+                            Name = "Cashier",
+                            Description = "Posts approved cash and savings transactions.",
+                            IsActive = true,
+                            IsSystemRole = true,
+                            NormalizedName = "CASHIER"
+                        },
+                        new
+                        {
+                            Name = "Field Officer",
+                            Description = "Manages member and field loan operations.",
+                            IsActive = true,
+                            IsSystemRole = true,
+                            NormalizedName = "FIELD OFFICER"
+                        });
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.AuditLog", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("ActorName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int?>("ActorUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("BranchId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EntityId")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("Success");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BranchId", "CreatedAt");
+
+                    b.HasIndex("EntityType", "EntityId");
+
+                    b.ToTable("AuditLogs", (string)null);
+                });
+
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.Branch", b =>
                 {
                     b.Property<int>("Id")
@@ -59,6 +184,157 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("Branches", (string)null);
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.ChartOfAccount", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AccountType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsSystemAccount")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("ChartOfAccounts", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            AccountType = "Asset",
+                            Code = "1000",
+                            IsActive = true,
+                            IsSystemAccount = true,
+                            Name = "Cash"
+                        },
+                        new
+                        {
+                            Id = 2,
+                            AccountType = "Asset",
+                            Code = "1200",
+                            IsActive = true,
+                            IsSystemAccount = true,
+                            Name = "Loans Receivable"
+                        },
+                        new
+                        {
+                            Id = 3,
+                            AccountType = "Liability",
+                            Code = "2000",
+                            IsActive = true,
+                            IsSystemAccount = true,
+                            Name = "Member Savings"
+                        },
+                        new
+                        {
+                            Id = 4,
+                            AccountType = "Income",
+                            Code = "4000",
+                            IsActive = true,
+                            IsSystemAccount = true,
+                            Name = "Loan Interest Income"
+                        });
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.JournalEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("BranchId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(240)
+                        .HasColumnType("character varying(240)");
+
+                    b.Property<DateTime>("PostedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BranchId", "PostedAt");
+
+                    b.HasIndex("SourceType", "SourceId")
+                        .IsUnique();
+
+                    b.ToTable("JournalEntries", (string)null);
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.JournalLine", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("ChartOfAccountId")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("Credit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("Debit")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<long>("JournalEntryId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChartOfAccountId");
+
+                    b.HasIndex("JournalEntryId", "ChartOfAccountId");
+
+                    b.ToTable("JournalLines", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_JournalLines_Amounts", "\"Debit\" >= 0 AND \"Credit\" >= 0 AND ((\"Debit\" > 0 AND \"Credit\" = 0) OR (\"Credit\" > 0 AND \"Debit\" = 0))");
+                        });
                 });
 
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.Loan", b =>
@@ -113,6 +389,112 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                     b.ToTable("Loans", (string)null);
                 });
 
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.LoanInstallment", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("BalanceAfter")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("DueDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("InstallmentNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("InterestDue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("InterestPaid")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("LoanId")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("PrincipalDue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("PrincipalPaid")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasDefaultValue("NotScheduled");
+
+                    b.Property<decimal>("TotalDue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LoanId", "InstallmentNumber")
+                        .IsUnique();
+
+                    b.ToTable("LoanInstallments", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_LoanInstallments_Amounts", "\"PrincipalDue\" >= 0 AND \"InterestDue\" >= 0 AND \"TotalDue\" > 0 AND \"BalanceAfter\" >= 0 AND \"PrincipalPaid\" >= 0 AND \"PrincipalPaid\" <= \"PrincipalDue\" AND \"InterestPaid\" >= 0 AND \"InterestPaid\" <= \"InterestDue\"");
+                        });
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.LoanPayment", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<decimal>("InterestAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int>("LoanId")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("PrincipalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LoanId", "CreatedAt");
+
+                    b.HasIndex("LoanId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.ToTable("LoanPayments", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_LoanPayments_Amounts", "\"Amount\" > 0 AND \"PrincipalAmount\" >= 0 AND \"InterestAmount\" >= 0 AND \"PrincipalAmount\" + \"InterestAmount\" = \"Amount\"");
+                        });
+                });
+
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.Member", b =>
                 {
                     b.Property<int>("Id")
@@ -159,6 +541,554 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("Members", (string)null);
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.PasswordResetToken", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("StaffUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("StaffUserId", "ExpiresAt");
+
+                    b.ToTable("PasswordResetTokens", (string)null);
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.PermissionDefinition", b =>
+                {
+                    b.Property<string>("Code")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(240)
+                        .HasColumnType("character varying(240)");
+
+                    b.Property<string>("Module")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.HasKey("Code");
+
+                    b.ToTable("PermissionDefinitions", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Code = "Dashboard.Read",
+                            Description = "View the dashboard.",
+                            Module = "Dashboard"
+                        },
+                        new
+                        {
+                            Code = "Branches.Read",
+                            Description = "View permitted branches.",
+                            Module = "Branches"
+                        },
+                        new
+                        {
+                            Code = "Members.Read",
+                            Description = "View members.",
+                            Module = "Members"
+                        },
+                        new
+                        {
+                            Code = "Members.Create",
+                            Description = "Create members.",
+                            Module = "Members"
+                        },
+                        new
+                        {
+                            Code = "Savings.Read",
+                            Description = "View savings accounts and transactions.",
+                            Module = "Savings"
+                        },
+                        new
+                        {
+                            Code = "Savings.CreateAccount",
+                            Description = "Open savings accounts.",
+                            Module = "Savings"
+                        },
+                        new
+                        {
+                            Code = "Savings.Transact",
+                            Description = "Post savings deposits and withdrawals.",
+                            Module = "Savings"
+                        },
+                        new
+                        {
+                            Code = "Loans.Read",
+                            Description = "View loans, schedules, and payments.",
+                            Module = "Loans"
+                        },
+                        new
+                        {
+                            Code = "Loans.Create",
+                            Description = "Create loans.",
+                            Module = "Loans"
+                        },
+                        new
+                        {
+                            Code = "Loans.Approve",
+                            Description = "Approve pending loans.",
+                            Module = "Loans"
+                        },
+                        new
+                        {
+                            Code = "Loans.Disburse",
+                            Description = "Disburse approved loans.",
+                            Module = "Loans"
+                        },
+                        new
+                        {
+                            Code = "Loans.Repay",
+                            Description = "Post loan repayments.",
+                            Module = "Loans"
+                        },
+                        new
+                        {
+                            Code = "Collections.Read",
+                            Description = "View collection sheets.",
+                            Module = "Collections"
+                        },
+                        new
+                        {
+                            Code = "Accounting.Read",
+                            Description = "View accounting information.",
+                            Module = "Accounting"
+                        },
+                        new
+                        {
+                            Code = "Reports.Read",
+                            Description = "View reports.",
+                            Module = "Reports"
+                        },
+                        new
+                        {
+                            Code = "Audit.Read",
+                            Description = "View audit logs.",
+                            Module = "Audit"
+                        },
+                        new
+                        {
+                            Code = "Settings.Read",
+                            Description = "View system settings.",
+                            Module = "Settings"
+                        },
+                        new
+                        {
+                            Code = "Security.Users.Manage",
+                            Description = "Manage staff user accounts.",
+                            Module = "Security"
+                        },
+                        new
+                        {
+                            Code = "Security.Roles.Manage",
+                            Description = "Manage roles and their permissions.",
+                            Module = "Security"
+                        });
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.RefreshToken", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReplacedByTokenHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SecurityStamp")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<int>("StaffUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("StaffUserId", "ExpiresAt");
+
+                    b.ToTable("RefreshTokens", (string)null);
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.RolePermission", b =>
+                {
+                    b.Property<string>("AccessRoleName")
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("PermissionCode")
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("AccessRoleName", "PermissionCode");
+
+                    b.HasIndex("PermissionCode");
+
+                    b.ToTable("RolePermissions", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Dashboard.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Branches.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Members.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Members.Create"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Savings.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Savings.CreateAccount"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Savings.Transact"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Loans.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Loans.Create"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Loans.Approve"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Loans.Disburse"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Loans.Repay"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Collections.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Accounting.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Reports.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Audit.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Settings.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Security.Users.Manage"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Security.Roles.Manage"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Dashboard.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Branches.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Members.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Members.Create"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Savings.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Savings.CreateAccount"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Savings.Transact"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Loans.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Loans.Create"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Loans.Approve"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Loans.Disburse"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Loans.Repay"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Collections.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Accounting.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Reports.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Audit.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
+                            PermissionCode = "Settings.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Dashboard.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Branches.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Savings.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Savings.Transact"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Loans.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Loans.Repay"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Collections.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Accounting.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Reports.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Accountant",
+                            PermissionCode = "Audit.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Cashier",
+                            PermissionCode = "Dashboard.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Cashier",
+                            PermissionCode = "Branches.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Cashier",
+                            PermissionCode = "Savings.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Cashier",
+                            PermissionCode = "Savings.Transact"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Cashier",
+                            PermissionCode = "Loans.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Cashier",
+                            PermissionCode = "Loans.Repay"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Cashier",
+                            PermissionCode = "Collections.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Dashboard.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Branches.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Members.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Members.Create"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Savings.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Savings.CreateAccount"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Loans.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Loans.Create"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Collections.Read"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Reports.Read"
+                        });
                 });
 
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.SavingsAccount", b =>
@@ -311,6 +1241,9 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<DateTime?>("PasswordChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("text");
@@ -320,6 +1253,11 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<string>("SecurityStamp")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BranchId");
@@ -327,7 +1265,45 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                     b.HasIndex("NormalizedEmail")
                         .IsUnique();
 
+                    b.HasIndex("Role");
+
                     b.ToTable("StaffUsers", (string)null);
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.AuditLog", b =>
+                {
+                    b.HasOne("MicrofinanceErp.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.JournalEntry", b =>
+                {
+                    b.HasOne("MicrofinanceErp.Domain.Entities.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.JournalLine", b =>
+                {
+                    b.HasOne("MicrofinanceErp.Domain.Entities.ChartOfAccount", "Account")
+                        .WithMany()
+                        .HasForeignKey("ChartOfAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MicrofinanceErp.Domain.Entities.JournalEntry", "JournalEntry")
+                        .WithMany("Lines")
+                        .HasForeignKey("JournalEntryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Account");
+
+                    b.Navigation("JournalEntry");
                 });
 
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.Loan", b =>
@@ -341,6 +1317,28 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                     b.Navigation("Member");
                 });
 
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.LoanInstallment", b =>
+                {
+                    b.HasOne("MicrofinanceErp.Domain.Entities.Loan", "Loan")
+                        .WithMany("Installments")
+                        .HasForeignKey("LoanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Loan");
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.LoanPayment", b =>
+                {
+                    b.HasOne("MicrofinanceErp.Domain.Entities.Loan", "Loan")
+                        .WithMany("Payments")
+                        .HasForeignKey("LoanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Loan");
+                });
+
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.Member", b =>
                 {
                     b.HasOne("MicrofinanceErp.Domain.Entities.Branch", "Branch")
@@ -350,6 +1348,47 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Branch");
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.PasswordResetToken", b =>
+                {
+                    b.HasOne("MicrofinanceErp.Domain.Entities.StaffUser", "StaffUser")
+                        .WithMany()
+                        .HasForeignKey("StaffUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("StaffUser");
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.RefreshToken", b =>
+                {
+                    b.HasOne("MicrofinanceErp.Domain.Entities.StaffUser", "StaffUser")
+                        .WithMany()
+                        .HasForeignKey("StaffUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("StaffUser");
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.RolePermission", b =>
+                {
+                    b.HasOne("MicrofinanceErp.Domain.Entities.AccessRole", "AccessRole")
+                        .WithMany("Permissions")
+                        .HasForeignKey("AccessRoleName")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MicrofinanceErp.Domain.Entities.PermissionDefinition", "Permission")
+                        .WithMany()
+                        .HasForeignKey("PermissionCode")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("AccessRole");
+
+                    b.Navigation("Permission");
                 });
 
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.SavingsAccount", b =>
@@ -380,11 +1419,34 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         .WithMany()
                         .HasForeignKey("BranchId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("MicrofinanceErp.Domain.Entities.AccessRole", null)
+                        .WithMany()
+                        .HasForeignKey("Role")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.AccessRole", b =>
+                {
+                    b.Navigation("Permissions");
                 });
 
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.Branch", b =>
                 {
                     b.Navigation("Members");
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.JournalEntry", b =>
+                {
+                    b.Navigation("Lines");
+                });
+
+            modelBuilder.Entity("MicrofinanceErp.Domain.Entities.Loan", b =>
+                {
+                    b.Navigation("Installments");
+
+                    b.Navigation("Payments");
                 });
 
             modelBuilder.Entity("MicrofinanceErp.Domain.Entities.Member", b =>
