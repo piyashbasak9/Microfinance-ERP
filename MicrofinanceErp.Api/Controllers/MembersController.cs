@@ -14,6 +14,7 @@ namespace MicrofinanceErp.Api.Controllers;
 [Route("api/v1")]
 public class MembersController : ControllerBase
 {
+    private static readonly string[] SupportedStatuses = ["Active", "Pending KYC", "Dormant", "Inactive"];
     private readonly MicrofinanceErpDbContext _dbContext;
 
     public MembersController(MicrofinanceErpDbContext dbContext)
@@ -190,6 +191,85 @@ public class MembersController : ControllerBase
 
         return StatusCode(StatusCodes.Status201Created, new ApiEnvelope<object>(true, "Member created successfully.", created, null, HttpContext.TraceIdentifier));
     }
+
+    [HttpPut("members/{memberId:int}")]
+    [RequirePermission(AccessControlCatalog.MembersUpdate)]
+    public async Task<ActionResult<ApiEnvelope<object>>> UpdateMember(
+        int memberId,
+        [FromBody] UpdateMemberRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!BranchAccess.TryGetBranchScope(User, out var branchId))
+        {
+            return Forbid();
+        }
+
+        IQueryable<Member> query = _dbContext.Members.Include(item => item.Branch);
+        if (branchId.HasValue)
+        {
+            query = query.Where(member => member.BranchId == branchId.Value);
+        }
+
+        var member = await query.SingleOrDefaultAsync(item => item.Id == memberId, cancellationToken);
+        if (member is null)
+        {
+            return NotFound(new ApiEnvelope<object>(false, "Member not found.", null, null, HttpContext.TraceIdentifier));
+        }
+
+        var normalizedNationalId = string.IsNullOrWhiteSpace(request.NationalId)
+            ? null
+            : request.NationalId.Trim();
+        if (normalizedNationalId is not null)
+        {
+            var duplicate = await _dbContext.Members.AnyAsync(
+                item => item.BranchId == member.BranchId
+                    && item.Id != member.Id
+                    && item.NationalId != null
+                    && item.NationalId.Trim() == normalizedNationalId,
+                cancellationToken);
+            if (duplicate)
+            {
+                return Conflict(new ApiEnvelope<object>(false, "A member with this national ID already exists for the selected branch.", null, null, HttpContext.TraceIdentifier));
+            }
+        }
+
+        if (!SupportedStatuses.Contains(request.Status.Trim(), StringComparer.OrdinalIgnoreCase))
+        {
+            return BadRequest(new ApiEnvelope<object>(false, "The selected member status is not supported.", null, null, HttpContext.TraceIdentifier));
+        }
+
+        member.FirstName = request.FirstName.Trim();
+        member.LastName = request.LastName.Trim();
+        member.PhoneNumber = string.IsNullOrWhiteSpace(request.PhoneNumber) ? null : request.PhoneNumber.Trim();
+        member.NationalId = normalizedNationalId;
+        member.Status = SupportedStatuses.First(status => string.Equals(status, request.Status.Trim(), StringComparison.OrdinalIgnoreCase));
+        member.UpdatedAt = DateTime.UtcNow;
+
+        await using (var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken))
+        {
+            _dbContext.AuditLogs.Add(AuditLogFactory.Create(User, member.BranchId, "Member updated", "Member", member.Id.ToString()));
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        var updated = new
+        {
+            id = member.Id,
+            firstName = member.FirstName,
+            lastName = member.LastName,
+            name = member.FirstName + " " + member.LastName,
+            phoneNumber = member.PhoneNumber,
+            nationalId = member.NationalId,
+            status = member.Status,
+            branchId = member.BranchId,
+            branch = member.Branch.Name,
+            branchCode = member.Branch.Code,
+            createdAt = member.CreatedAt,
+            updatedAt = member.UpdatedAt
+        };
+
+        return Ok(new ApiEnvelope<object>(true, "Member updated successfully.", updated, null, HttpContext.TraceIdentifier));
+    }
 }
 
 public sealed class CreateMemberRequest
@@ -213,4 +293,25 @@ public sealed class CreateMemberRequest
 
     [StringLength(50)]
     public string? Status { get; set; }
+}
+
+public sealed class UpdateMemberRequest
+{
+    [Required]
+    [StringLength(120, MinimumLength = 2)]
+    public string FirstName { get; set; } = string.Empty;
+
+    [Required]
+    [StringLength(120, MinimumLength = 2)]
+    public string LastName { get; set; } = string.Empty;
+
+    [StringLength(20)]
+    public string? PhoneNumber { get; set; }
+
+    [StringLength(40)]
+    public string? NationalId { get; set; }
+
+    [Required]
+    [StringLength(50)]
+    public string Status { get; set; } = string.Empty;
 }

@@ -5,6 +5,7 @@ import {
   NavLink,
   Route,
   Routes,
+  useLocation,
   useSearchParams,
   useNavigate,
 } from 'react-router-dom';
@@ -183,6 +184,14 @@ type LoanInstallment = {
   interestPaid: number;
 };
 
+type LoanPaymentRecord = {
+  id: number;
+  amount: number;
+  principalAmount: number;
+  interestAmount: number;
+  createdAt: string;
+};
+
 type CollectionSheet = {
   id: number;
   center: string;
@@ -197,6 +206,7 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
 
 const menuItems: MenuItem[] = [
   { label: 'Dashboard', path: '/dashboard', permissions: ['Dashboard.Read'] },
+  { label: 'Branches', path: '/branches', permissions: ['Branches.Read'] },
   { label: 'Members', path: '/members', permissions: ['Members.Read'] },
   { label: 'Savings', path: '/savings', permissions: ['Savings.Read'] },
   { label: 'Loans', path: '/loans', permissions: ['Loans.Read'] },
@@ -207,6 +217,24 @@ const menuItems: MenuItem[] = [
   { label: 'Settings', path: '/settings', permissions: ['Settings.Read'] },
   { label: 'Security', path: '/admin', permissions: ['Security.Users.Manage', 'Security.Roles.Manage'] },
 ];
+
+function downloadCsv(fileName: string, headers: string[], rows: Array<Array<string | number | null | undefined>>) {
+  const escapeCell = (value: string | number | null | undefined) => {
+    const raw = value == null ? '' : String(value);
+    const text = typeof value === 'string' && /^[\s]*[=+\-@]/.test(raw) ? `'${raw}` : raw;
+    return `"${text.replaceAll('"', '""')}"`;
+  };
+  const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(',')).join('\r\n');
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 function App() {
   const [session, setSession] = useState<LoginResult | null>(null);
@@ -223,14 +251,29 @@ function App() {
           setSession(restoredSession);
         }
       } catch (requestError) {
+        if (abortController.signal.aborted) {
+          return;
+        }
         setAuthError(requestError instanceof Error ? requestError.message : 'Unable to restore your session.');
       } finally {
-        setIsInitializing(false);
+        if (!abortController.signal.aborted) {
+          setIsInitializing(false);
+        }
       }
     };
 
     void initializeSession();
     return () => abortController.abort();
+  }, []);
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      setSession(null);
+      setAuthError('Your session expired. Sign in again.');
+    };
+
+    window.addEventListener('mfi:session-expired', handleSessionExpired);
+    return () => window.removeEventListener('mfi:session-expired', handleSessionExpired);
   }, []);
 
   useEffect(() => {
@@ -260,7 +303,7 @@ function App() {
   }, [session]);
 
   const handleLogout = () => {
-    void fetch(`${apiBaseUrl}/auth/logout`, {
+    void apiFetch(`${apiBaseUrl}/auth/logout`, {
       method: 'POST',
       credentials: 'include',
     }).then((response) => {
@@ -303,10 +346,15 @@ function App() {
         <Routes>
           <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <LoginPage onLogin={(nextSession) => { setAuthError(''); setSession(nextSession); }} initialError={authError} />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/branches" element={renderProtectedPage('Branches.Read', <BranchesPage token={session?.token ?? ''} />)} />
           <Route path="/dashboard" element={renderProtectedPage('Dashboard.Read', <DashboardPage token={session?.token ?? ''} />)} />
-          <Route path="/members" element={renderProtectedPage('Members.Read', <MembersPage token={session?.token ?? ''} />)} />
-          <Route path="/savings" element={renderProtectedPage('Savings.Read', <SavingsPage token={session?.token ?? ''} />)} />
-          <Route path="/loans" element={renderProtectedPage('Loans.Read', <LoansPage token={session?.token ?? ''} />)} />
+          <Route path="/members" element={renderProtectedPage('Members.Read', <MembersPage
+            token={session?.token ?? ''}
+            canCreate={session?.permissions.includes('Members.Create') ?? false}
+            canEdit={session?.permissions.includes('Members.Update') ?? false}
+          />)} />
+          <Route path="/savings" element={renderProtectedPage('Savings.Read', <SavingsPage token={session?.token ?? ''} canOpenAccount={session?.permissions.includes('Savings.CreateAccount') ?? false} canTransact={session?.permissions.includes('Savings.Transact') ?? false} />)} />
+          <Route path="/loans" element={renderProtectedPage('Loans.Read', <LoansPage token={session?.token ?? ''} permissions={session?.permissions ?? []} />)} />
           <Route path="/collections" element={renderProtectedPage('Collections.Read', <CollectionsPage token={session?.token ?? ''} />)} />
           <Route path="/accounting" element={renderProtectedPage('Accounting.Read', <AccountingPage token={session?.token ?? ''} />)} />
           <Route path="/reports" element={renderProtectedPage('Reports.Read', <ReportsPage token={session?.token ?? ''} />)} />
@@ -322,7 +370,7 @@ function App() {
 }
 
 async function refreshSession(signal?: AbortSignal): Promise<LoginResult | null> {
-  const response = await fetch(`${apiBaseUrl}/auth/refresh`, {
+  const response = await apiFetch(`${apiBaseUrl}/auth/refresh`, {
     method: 'POST',
     credentials: 'include',
     signal,
@@ -345,7 +393,7 @@ async function adminRequest<T>(path: string, token: string, init: RequestInit = 
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
+  const response = await apiFetch(`${apiBaseUrl}${path}`, { ...init, headers });
   const envelope = (await response.json()) as ApiEnvelope<T>;
   if (!response.ok || !envelope.success || !envelope.data) {
     throw new Error(envelope.message || 'The security request failed.');
@@ -353,8 +401,17 @@ async function adminRequest<T>(path: string, token: string, init: RequestInit = 
   return envelope.data;
 }
 
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const response = await fetch(input, init);
+  if (response.status === 401 && new Headers(init.headers).has('Authorization')) {
+    window.dispatchEvent(new Event('mfi:session-expired'));
+  }
+  return response;
+}
+
 function AppLayout({ children, user, token, permissions, onLogout }: { children?: ReactNode; user: AuthenticatedUser; token: string; permissions: string[]; onLogout: () => void }) {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleLogout = () => {
     onLogout();
@@ -368,7 +425,7 @@ function AppLayout({ children, user, token, permissions, onLogout }: { children?
           <div className="brand-mark">M</div>
           <div>
             <strong>Microfinance ERP</strong>
-            <span>Head Office</span>
+            <span>{user.role === 'Super Admin' || user.branchId === null ? 'All branches' : `Branch #${user.branchId}`}</span>
           </div>
         </div>
 
@@ -388,10 +445,10 @@ function AppLayout({ children, user, token, permissions, onLogout }: { children?
       <main className="content-shell">
         <header className="topbar">
           <div>
-            <h1>Operations dashboard</h1>
+            <h1>{menuItems.find((item) => item.path === location.pathname)?.label ?? 'Operations'}</h1>
           </div>
           <div className="user-panel">
-            <span>{user.name}</span>
+            <span>{user.name} · {user.role}</span>
             <button type="button" className="logout-btn" onClick={handleLogout}>
               Sign out
             </button>
@@ -417,7 +474,7 @@ function LoginPage({ onLogin, initialError }: { onLogin: (session: LoginResult) 
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${apiBaseUrl}/auth/login`, {
+      const response = await apiFetch(`${apiBaseUrl}/auth/login`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -491,7 +548,7 @@ function ResetPasswordPage() {
     try {
       const endpoint = resetToken ? '/auth/password/reset' : '/auth/password/forgot';
       const body = resetToken ? { token: resetToken, newPassword } : { email };
-      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+      const response = await apiFetch(`${apiBaseUrl}${endpoint}`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -846,6 +903,7 @@ function DashboardPage({ token }: { token: string }) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -855,7 +913,7 @@ function DashboardPage({ token }: { token: string }) {
         setLoading(true);
         setError('');
 
-        const response = await fetch(`${apiBaseUrl}/dashboard/summary`, {
+        const response = await apiFetch(`${apiBaseUrl}/dashboard/summary`, {
           signal: abortController.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -881,7 +939,7 @@ function DashboardPage({ token }: { token: string }) {
 
     void loadSummary();
     return () => abortController.abort();
-  }, [token]);
+  }, [reloadKey, token]);
 
   const metrics = summary?.metrics ?? [];
 
@@ -899,10 +957,13 @@ function DashboardPage({ token }: { token: string }) {
 
   return (
     <div className="page-stack">
+      <div className="dashboard-actions">
+        <button type="button" className="secondary-button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading}>Refresh dashboard</button>
+      </div>
       {loading ? (
-        <div className="empty-state">Loading dashboard…</div>
+        <div className="empty-state" role="status">Loading dashboard…</div>
       ) : error ? (
-        <div className="empty-state error-state">{error}</div>
+        <div className="empty-state error-state" role="alert">{error}</div>
       ) : (
         <>
           <section className="stats-grid">
@@ -919,7 +980,6 @@ function DashboardPage({ token }: { token: string }) {
             <div className="panel">
               <div className="panel-header">
                 <h3>Recent members</h3>
-                <a href="/members">View all</a>
               </div>
               <table>
                 <thead>
@@ -945,7 +1005,6 @@ function DashboardPage({ token }: { token: string }) {
             <div className="panel">
               <div className="panel-header">
                 <h3>Collections</h3>
-                <a href="/collections">Open module</a>
               </div>
               <div className="empty-state">
                 Collection totals will be available after collection posting is implemented.
@@ -955,8 +1014,12 @@ function DashboardPage({ token }: { token: string }) {
 
           <section className="panel">
             <div className="panel-header">
-              <h3>Loan portfolio</h3>
-              <button type="button">Export</button>
+              <h3>Recent loans</h3>
+              <button type="button" className="secondary-button" disabled={!summary?.recentLoans.length} onClick={() => downloadCsv(
+                'recent-loan-portfolio.csv',
+                ['Loan ID', 'Member', 'Product', 'Outstanding', 'Status'],
+                (summary?.recentLoans ?? []).map((loan) => [loan.id, loan.member, loan.product, loan.outstanding, loan.status]),
+              )}>Export recent CSV</button>
             </div>
             <table>
               <thead>
@@ -986,15 +1049,80 @@ function DashboardPage({ token }: { token: string }) {
   );
 }
 
-function MembersPage({ token }: { token: string }) {
+function BranchesPage({ token }: { token: string }) {
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadBranches = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const response = await apiFetch(`${apiBaseUrl}/branches`, {
+          signal: controller.signal,
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const envelope = (await response.json()) as ApiEnvelope<BranchOption[]>;
+        if (!response.ok || !envelope.success || !envelope.data) {
+          throw new Error(envelope.message || 'Unable to load branches.');
+        }
+        setBranches(envelope.data);
+      } catch (requestError) {
+        if (requestError instanceof Error && requestError.name === 'AbortError') return;
+        setError(requestError instanceof Error ? requestError.message : 'Unable to load branches.');
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+    void loadBranches();
+    return () => controller.abort();
+  }, [reloadKey, token]);
+
+  return (
+    <div className="page-card panel">
+      <div className="page-toolbar">
+        <div><h2>Branches</h2><p>View branches available to your account.</p></div>
+        <button type="button" className="secondary-button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading}>Refresh</button>
+      </div>
+      {loading ? <div className="empty-state" role="status">Loading branches…</div>
+        : error ? <div className="empty-state error-state" role="alert">{error}</div>
+          : branches.length === 0 ? <div className="empty-state">No branches are available.</div>
+            : (
+              <div className="table-wrap">
+                <table className="member-table">
+                  <thead><tr><th>Branch</th><th>Code</th><th>Address</th><th>Status</th></tr></thead>
+                  <tbody>{branches.map((branch) => (
+                    <tr key={branch.id}>
+                      <td>{branch.name}</td>
+                      <td>{branch.code}</td>
+                      <td>{branch.address || '—'}</td>
+                      <td><span className={`status-tag ${branch.isActive ? 'active' : 'inactive'}`}>{branch.isActive ? 'Active' : 'Inactive'}</span></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+    </div>
+  );
+}
+
+function MembersPage({ token, canCreate, canEdit }: { token: string; canCreate: boolean; canEdit: boolean }) {
   const [members, setMembers] = useState<MemberRecord[]>([]);
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingMemberId, setEditingMemberId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
+  const [search, setSearch] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [formState, setFormState] = useState({
     firstName: '',
     lastName: '',
@@ -1005,7 +1133,7 @@ function MembersPage({ token }: { token: string }) {
   });
 
   const loadBranches = useCallback(async () => {
-    const response = await fetch(`${apiBaseUrl}/branches`, {
+    const response = await apiFetch(`${apiBaseUrl}/branches`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
@@ -1032,7 +1160,7 @@ function MembersPage({ token }: { token: string }) {
         setLoading(true);
         setError('');
 
-        const response = await fetch(`${apiBaseUrl}/members`, {
+        const response = await apiFetch(`${apiBaseUrl}/members`, {
           signal: abortController.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -1045,7 +1173,7 @@ function MembersPage({ token }: { token: string }) {
         }
 
         setMembers(envelope.data);
-        await loadBranches();
+        if (canCreate) await loadBranches();
       } catch (requestError) {
         if (requestError instanceof Error && requestError.name === 'AbortError') {
           return;
@@ -1059,9 +1187,19 @@ function MembersPage({ token }: { token: string }) {
 
     void loadMembers();
     return () => abortController.abort();
-  }, [loadBranches, token]);
+  }, [canCreate, loadBranches, reloadKey, token]);
+
+  const visibleMembers = members.filter((member) => {
+    const query = search.trim().toLocaleLowerCase();
+    const matchesSearch = !query || [member.name, member.phoneNumber, member.nationalId, member.branch, member.branchCode]
+      .some((value) => value?.toLocaleLowerCase().includes(query));
+    return matchesSearch
+      && (!branchFilter || String(member.branchId ?? '') === branchFilter)
+      && (!statusFilter || member.status === statusFilter);
+  });
 
   const resetForm = () => {
+    setEditingMemberId(null);
     setFormState({
       firstName: '',
       lastName: '',
@@ -1074,7 +1212,7 @@ function MembersPage({ token }: { token: string }) {
     setFormSuccess('');
   };
 
-  const handleCreateMember = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSaveMember = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setFormError('');
     setFormSuccess('');
@@ -1084,35 +1222,55 @@ function MembersPage({ token }: { token: string }) {
       const payload = {
         firstName: formState.firstName.trim(),
         lastName: formState.lastName.trim(),
-        branchId: Number(formState.branchId),
         phoneNumber: formState.phoneNumber.trim() || null,
         nationalId: formState.nationalId.trim() || null,
         status: formState.status || 'Active',
       };
 
-      const response = await fetch(`${apiBaseUrl}/members`, {
-        method: 'POST',
+      const isEditing = editingMemberId !== null;
+      const response = await apiFetch(`${apiBaseUrl}/members${isEditing ? `/${editingMemberId}` : ''}`, {
+        method: isEditing ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(isEditing ? payload : { ...payload, branchId: Number(formState.branchId) }),
       });
 
       const envelope = (await response.json()) as ApiEnvelope<MemberRecord>;
       if (!response.ok || !envelope.success || !envelope.data) {
-        throw new Error(envelope.message || 'Unable to create member.');
+        throw new Error(envelope.message || `Unable to ${isEditing ? 'update' : 'create'} member.`);
       }
 
-      setMembers((current) => [envelope.data as MemberRecord, ...current]);
+      const savedMember = envelope.data;
+      if (isEditing) {
+        setMembers((current) => current.map((member) => member.id === savedMember.id ? savedMember : member));
+      } else {
+        setMembers((current) => [savedMember, ...current]);
+      }
       setIsFormOpen(false);
       resetForm();
-      setFormSuccess('Member added successfully.');
+      setFormSuccess(isEditing ? 'Member updated successfully.' : 'Member added successfully.');
     } catch (requestError) {
-      setFormError(requestError instanceof Error ? requestError.message : 'Unable to create member.');
+      setFormError(requestError instanceof Error ? requestError.message : 'Unable to save member.');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const editMember = (member: MemberRecord) => {
+    setEditingMemberId(member.id);
+    setFormState({
+      firstName: member.firstName ?? member.name.split(' ')[0] ?? '',
+      lastName: member.lastName ?? member.name.split(' ').slice(1).join(' '),
+      branchId: String(member.branchId ?? ''),
+      phoneNumber: member.phoneNumber ?? '',
+      nationalId: member.nationalId ?? '',
+      status: member.status,
+    });
+    setFormError('');
+    setFormSuccess('');
+    setIsFormOpen(true);
   };
 
   return (
@@ -1120,42 +1278,50 @@ function MembersPage({ token }: { token: string }) {
       <div className="page-toolbar">
         <div>
           <h2>Members</h2>
-          <p>Create, verify, and track member onboarding and KYC.</p>
+          <p>Register members and review their branch, contact, and account status.</p>
         </div>
-        <button
+        <div className="toolbar-actions">
+          <button type="button" className="secondary-button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading}>Refresh</button>
+          <button type="button" className="secondary-button" disabled={!visibleMembers.length} onClick={() => downloadCsv(
+            'members.csv',
+            ['ID', 'Name', 'Branch', 'Branch code', 'Status', 'Created'],
+            visibleMembers.map((member) => [member.id, member.name, member.branch, member.branchCode, member.status, member.createdAt]),
+          )}>Export CSV</button>
+          {canCreate && <button
           type="button"
           onClick={() => {
             setFormError('');
             setFormSuccess('');
+            resetForm();
             setIsFormOpen((current) => !current);
-            if (!isFormOpen) {
-              resetForm();
-            }
           }}
         >
-          {isFormOpen ? 'Close' : 'Add member'}
-        </button>
+          {isFormOpen ? 'Cancel' : 'Add member'}
+          </button>}
+        </div>
       </div>
 
-      {isFormOpen && (
-        <form className="member-form" onSubmit={handleCreateMember}>
+      {formSuccess && <div className="empty-state success-state" role="status">{formSuccess}</div>}
+
+      {isFormOpen && (canCreate || editingMemberId !== null) && (
+        <form id="member-form" className="member-form" onSubmit={handleSaveMember}>
           <div className="member-form-grid">
             <label>
               First name
-              <input type="text" value={formState.firstName} onChange={(event) => setFormState((current) => ({ ...current, firstName: event.target.value }))} required />
+              <input type="text" minLength={2} maxLength={120} value={formState.firstName} onChange={(event) => setFormState((current) => ({ ...current, firstName: event.target.value }))} required />
             </label>
             <label>
               Last name
-              <input type="text" value={formState.lastName} onChange={(event) => setFormState((current) => ({ ...current, lastName: event.target.value }))} required />
+              <input type="text" minLength={2} maxLength={120} value={formState.lastName} onChange={(event) => setFormState((current) => ({ ...current, lastName: event.target.value }))} required />
             </label>
-            <label>
+            {editingMemberId === null ? <label>
               Branch
-              <select value={formState.branchId} onChange={(event) => setFormState((current) => ({ ...current, branchId: event.target.value }))} required>
+              <select value={formState.branchId} onChange={(event) => setFormState((current) => ({ ...current, branchId: event.target.value }))} required disabled={branches.length === 0}>
                 {branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>{branch.name} ({branch.code})</option>
                 ))}
               </select>
-            </label>
+            </label> : <label>Branch<input value={members.find((member) => member.id === editingMemberId)?.branch ?? ''} readOnly /></label>}
             <label>
               Status
               <select value={formState.status} onChange={(event) => setFormState((current) => ({ ...current, status: event.target.value }))}>
@@ -1167,19 +1333,20 @@ function MembersPage({ token }: { token: string }) {
             </label>
             <label>
               Phone number
-              <input type="tel" value={formState.phoneNumber} onChange={(event) => setFormState((current) => ({ ...current, phoneNumber: event.target.value }))} />
+              <input type="tel" maxLength={20} value={formState.phoneNumber} onChange={(event) => setFormState((current) => ({ ...current, phoneNumber: event.target.value }))} />
             </label>
             <label>
               National ID
-              <input type="text" value={formState.nationalId} onChange={(event) => setFormState((current) => ({ ...current, nationalId: event.target.value }))} />
+              <input type="text" maxLength={40} value={formState.nationalId} onChange={(event) => setFormState((current) => ({ ...current, nationalId: event.target.value }))} />
             </label>
           </div>
 
+          {editingMemberId === null && branches.length === 0 && <p className="form-hint">A branch must be available before a member can be registered.</p>}
           {formError && <div className="empty-state error-state">{formError}</div>}
-          {formSuccess && <div className="empty-state success-state">{formSuccess}</div>}
 
           <div className="form-actions">
-            <button type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save member'}</button>
+            <button type="button" className="secondary-button" onClick={() => { resetForm(); setIsFormOpen(false); }} disabled={submitting}>Cancel</button>
+            <button type="submit" disabled={submitting || (editingMemberId === null && !formState.branchId)}>{submitting ? 'Saving…' : editingMemberId === null ? 'Save member' : 'Update member'}</button>
           </div>
         </form>
       )}
@@ -1191,6 +1358,26 @@ function MembersPage({ token }: { token: string }) {
       ) : members.length === 0 ? (
         <div className="empty-state">No members found.</div>
       ) : (
+        <>
+          <div className="list-filters">
+            <label>Search members
+              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, phone, ID, or branch" />
+            </label>
+            <label>Branch
+              <select value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)}>
+                <option value="">All branches</option>
+                {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+              </select>
+            </label>
+            <label>Status
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="">All statuses</option>
+                {[...new Set(members.map((member) => member.status))].sort().map((status) => <option key={status} value={status}>{status}</option>)}
+              </select>
+            </label>
+            <span className="filter-count">{visibleMembers.length} of {members.length} members</span>
+          </div>
+          {visibleMembers.length === 0 ? <div className="empty-state">No members match these filters.</div> : (
         <table className="member-table">
           <thead>
             <tr>
@@ -1199,10 +1386,11 @@ function MembersPage({ token }: { token: string }) {
               <th>Phone</th>
               <th>Status</th>
               <th>Created</th>
+              {canEdit && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
-            {members.map((member) => (
+            {visibleMembers.map((member) => (
               <tr key={member.id}>
                 <td>
                   <div className="member-name-block">
@@ -1218,20 +1406,28 @@ function MembersPage({ token }: { token: string }) {
                   </span>
                 </td>
                 <td>{new Date(member.createdAt).toLocaleDateString()}</td>
+                {canEdit && <td><button type="button" className="secondary-button" onClick={() => editMember(member)}>Edit</button></td>}
               </tr>
             ))}
           </tbody>
         </table>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function SavingsPage({ token }: { token: string }) {
+function SavingsPage({ token, canOpenAccount, canTransact }: { token: string; canOpenAccount: boolean; canTransact: boolean }) {
   const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
   const [members, setMembers] = useState<MemberRecord[]>([]);
   const [transactions, setTransactions] = useState<SavingsTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [historyAccountId, setHistoryAccountId] = useState<number | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [accountSearch, setAccountSearch] = useState('');
   const [error, setError] = useState('');
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
@@ -1242,6 +1438,11 @@ function SavingsPage({ token }: { token: string }) {
   const [transactionIdempotencyKey, setTransactionIdempotencyKey] = useState(() => window.crypto.randomUUID());
   const [accountForm, setAccountForm] = useState({ memberId: '', productName: 'General Savings', minimumBalance: '0' });
   const [transactionForm, setTransactionForm] = useState({ type: 'Deposit', amount: '' });
+  const visibleAccounts = accounts.filter((account) => {
+    const query = accountSearch.trim().toLocaleLowerCase();
+    return !query || [account.accountNumber, account.member, account.productName]
+      .some((value) => value?.toLocaleLowerCase().includes(query));
+  });
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1251,7 +1452,7 @@ function SavingsPage({ token }: { token: string }) {
         setLoading(true);
         setError('');
 
-        const response = await fetch(`${apiBaseUrl}/savings/accounts`, {
+        const response = await apiFetch(`${apiBaseUrl}/savings/accounts`, {
           signal: abortController.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -1265,7 +1466,8 @@ function SavingsPage({ token }: { token: string }) {
 
         setAccounts(envelope.data);
 
-        const memberResponse = await fetch(`${apiBaseUrl}/members`, {
+        if (canOpenAccount) {
+        const memberResponse = await apiFetch(`${apiBaseUrl}/members`, {
           signal: abortController.signal,
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -1277,6 +1479,7 @@ function SavingsPage({ token }: { token: string }) {
         setMembers(memberList);
         if (memberList.length > 0) {
           setAccountForm((current) => ({ ...current, memberId: String(memberList[0].id) }));
+        }
         }
       } catch (requestError) {
         if (requestError instanceof Error && requestError.name === 'AbortError') {
@@ -1291,7 +1494,7 @@ function SavingsPage({ token }: { token: string }) {
 
     void loadAccounts();
     return () => abortController.abort();
-  }, [token]);
+  }, [canOpenAccount, reloadKey, token]);
 
   const openTransactionForm = (accountId: number, type: string) => {
     setSelectedAccountId(String(accountId));
@@ -1300,14 +1503,18 @@ function SavingsPage({ token }: { token: string }) {
     setFormError('');
     setFormSuccess('');
     setTransactions([]);
+    setHistoryAccountId(null);
+    setHistoryError('');
     setTransactionFormOpen(true);
   };
 
   const loadTransactionHistory = async (accountId: number) => {
-    setFormError('');
-    setFormSuccess('');
+    setHistoryAccountId(accountId);
+    setHistoryLoading(true);
+    setHistoryError('');
+    setTransactions([]);
     try {
-      const response = await fetch(`${apiBaseUrl}/savings/accounts/${accountId}/transactions`, {
+      const response = await apiFetch(`${apiBaseUrl}/savings/accounts/${accountId}/transactions`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const envelope = (await response.json()) as ApiEnvelope<SavingsTransaction[]>;
@@ -1315,9 +1522,10 @@ function SavingsPage({ token }: { token: string }) {
         throw new Error(envelope.message || 'Unable to load transaction history.');
       }
       setTransactions(envelope.data);
-      setSelectedAccountId(String(accountId));
     } catch (requestError) {
-      setFormError(requestError instanceof Error ? requestError.message : 'Unable to load transaction history.');
+      setHistoryError(requestError instanceof Error ? requestError.message : 'Unable to load transaction history.');
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -1327,7 +1535,7 @@ function SavingsPage({ token }: { token: string }) {
     setFormSuccess('');
     setSubmitting(true);
     try {
-      const response = await fetch(`${apiBaseUrl}/savings/accounts`, {
+      const response = await apiFetch(`${apiBaseUrl}/savings/accounts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1356,11 +1564,15 @@ function SavingsPage({ token }: { token: string }) {
 
   const handleCreateTransaction = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const amount = Number(transactionForm.amount);
+    const account = accounts.find((item) => item.id === Number(selectedAccountId));
+    const formattedAmount = new Intl.NumberFormat('en-BD', { style: 'currency', currency: 'BDT' }).format(amount);
+    if (!window.confirm(`${transactionForm.type} ${formattedAmount} ${account ? `for ${account.accountNumber}` : 'to this account'}?`)) return;
     setFormError('');
     setFormSuccess('');
     setSubmitting(true);
     try {
-      const response = await fetch(`${apiBaseUrl}/savings/accounts/${selectedAccountId}/transactions`, {
+      const response = await apiFetch(`${apiBaseUrl}/savings/accounts/${selectedAccountId}/transactions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1397,22 +1609,28 @@ function SavingsPage({ token }: { token: string }) {
       <div className="page-toolbar">
         <div>
           <h2>Savings</h2>
-          <p>Manage account balances, deposits, withdrawals, and interest posting.</p>
+          <p>Manage account balances, deposits, withdrawals, and transaction history.</p>
         </div>
         <div className="toolbar-actions">
-          <button type="button" onClick={() => { setFormError(''); setFormSuccess(''); setAccountFormOpen((current) => !current); }}>
+          <button type="button" className="secondary-button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading}>Refresh</button>
+          <button type="button" className="secondary-button" disabled={!visibleAccounts.length} onClick={() => downloadCsv(
+            'savings-accounts.csv',
+            ['Account number', 'Member', 'Product', 'Balance', 'Minimum balance', 'Status'],
+            visibleAccounts.map((account) => [account.accountNumber, account.member, account.productName, account.balance, account.minimumBalance, account.status]),
+          )}>Export CSV</button>
+          {canOpenAccount && <button type="button" onClick={() => { setFormError(''); setFormSuccess(''); setAccountFormOpen((current) => !current); }}>
             {accountFormOpen ? 'Close' : 'Open account'}
-          </button>
-          <button type="button" onClick={() => accounts[0] && openTransactionForm(accounts[0].id, 'Deposit')} disabled={accounts.length === 0}>
+          </button>}
+          {canTransact && <button type="button" onClick={() => accounts[0] && openTransactionForm(accounts[0].id, 'Deposit')} disabled={accounts.length === 0}>
             New deposit
-          </button>
+          </button>}
         </div>
       </div>
 
       {formError && <div className="empty-state error-state">{formError}</div>}
       {formSuccess && <div className="empty-state success-state">{formSuccess}</div>}
 
-      {accountFormOpen && (
+      {accountFormOpen && canOpenAccount && (
         <form className="savings-form" onSubmit={handleCreateAccount}>
           <div className="savings-form-grid">
             <label>
@@ -1432,11 +1650,12 @@ function SavingsPage({ token }: { token: string }) {
               <input type="number" min="0" step="0.01" value={accountForm.minimumBalance} onChange={(event) => setAccountForm((current) => ({ ...current, minimumBalance: event.target.value }))} required />
             </label>
           </div>
-          <div className="form-actions"><button type="submit" disabled={submitting || members.filter((member) => member.status === 'Active').length === 0}>{submitting ? 'Saving…' : 'Open savings account'}</button></div>
+          {members.filter((member) => member.status === 'Active').length === 0 && <p className="form-hint">An active member is required before opening an account.</p>}
+          <div className="form-actions"><button type="submit" disabled={submitting || !accountForm.memberId || members.filter((member) => member.status === 'Active').length === 0}>{submitting ? 'Saving…' : 'Open savings account'}</button></div>
         </form>
       )}
 
-      {transactionFormOpen && (
+      {transactionFormOpen && canTransact && (
         <form className="savings-form" onSubmit={handleCreateTransaction}>
           <div className="savings-form-grid">
             <label>
@@ -1461,14 +1680,25 @@ function SavingsPage({ token }: { token: string }) {
         </form>
       )}
 
+      {!loading && !error && accounts.length > 0 && (
+        <div className="list-filters">
+          <label>Search accounts
+            <input type="search" value={accountSearch} onChange={(event) => setAccountSearch(event.target.value)} placeholder="Account number, member, or product" />
+          </label>
+          <span className="filter-count">{visibleAccounts.length} of {accounts.length} accounts</span>
+        </div>
+      )}
+
       {loading ? (
         <div className="empty-state">Loading savings accounts…</div>
       ) : error ? (
         <div className="empty-state error-state">{error}</div>
       ) : accounts.length === 0 ? (
         <div className="empty-state">No savings accounts found.</div>
+      ) : visibleAccounts.length === 0 ? (
+        <div className="empty-state">No accounts match this search.</div>
       ) : (
-        <table className="member-table">
+        <div className="table-wrap"><table className="member-table">
           <thead>
             <tr>
               <th>Account</th>
@@ -1480,7 +1710,7 @@ function SavingsPage({ token }: { token: string }) {
             </tr>
           </thead>
           <tbody>
-            {accounts.map((account) => (
+            {visibleAccounts.map((account) => (
               <tr key={account.id}>
                 <td>{account.accountNumber}</td>
                 <td>{account.member}</td>
@@ -1501,21 +1731,26 @@ function SavingsPage({ token }: { token: string }) {
                 </td>
                 <td>
                   <div className="row-actions">
-                    <button type="button" onClick={() => openTransactionForm(account.id, 'Deposit')}>Deposit</button>
-                    <button type="button" onClick={() => openTransactionForm(account.id, 'Withdrawal')}>Withdraw</button>
+                    {canTransact && <button type="button" onClick={() => openTransactionForm(account.id, 'Deposit')}>Deposit</button>}
+                    {canTransact && <button type="button" onClick={() => openTransactionForm(account.id, 'Withdrawal')}>Withdraw</button>}
                     <button type="button" onClick={() => void loadTransactionHistory(account.id)}>History</button>
                   </div>
                 </td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
 
-      {transactions.length > 0 && (
+      {historyAccountId !== null && (
         <section className="transaction-history">
-          <h3>Transaction history</h3>
-          <table className="member-table">
+          <div className="panel-header">
+            <h3>Transaction history — {accounts.find((account) => account.id === historyAccountId)?.accountNumber ?? `account #${historyAccountId}`}</h3>
+            <button type="button" className="secondary-button" onClick={() => setHistoryAccountId(null)}>Close</button>
+          </div>
+          {historyLoading ? <div className="empty-state" role="status">Loading transaction history…</div>
+            : historyError ? <div className="empty-state error-state" role="alert">{historyError}</div>
+              : transactions.length === 0 ? <div className="empty-state">No transactions recorded for this account.</div> : <table className="member-table">
             <thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Balance after</th></tr></thead>
             <tbody>
               {transactions.map((transaction) => (
@@ -1527,17 +1762,22 @@ function SavingsPage({ token }: { token: string }) {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table>}
         </section>
       )}
     </div>
   );
 }
 
-function LoansPage({ token }: { token: string }) {
+function LoansPage({ token, permissions }: { token: string; permissions: string[] }) {
+  const canCreate = permissions.includes('Loans.Create');
+  const canApprove = permissions.includes('Loans.Approve');
+  const canDisburse = permissions.includes('Loans.Disburse');
+  const canRepay = permissions.includes('Loans.Repay');
   const [loans, setLoans] = useState<LoanPortfolioItem[]>([]);
   const [members, setMembers] = useState<MemberRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -1546,7 +1786,13 @@ function LoansPage({ token }: { token: string }) {
   const [workflowMessage, setWorkflowMessage] = useState('');
   const [selectedSchedule, setSelectedSchedule] = useState<{ loanId: number; entries: LoanInstallment[] } | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduleLoanLoadingId, setScheduleLoanLoadingId] = useState<number | null>(null);
   const [selectedLoanForPayment, setSelectedLoanForPayment] = useState<number | null>(null);
+  const [paymentsForLoan, setPaymentsForLoan] = useState<{ loanId: number; entries: LoanPaymentRecord[] } | null>(null);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [transitioningLoanId, setTransitioningLoanId] = useState<number | null>(null);
+  const [loanSearch, setLoanSearch] = useState('');
+  const [loanStatusFilter, setLoanStatusFilter] = useState('');
   const [repaymentAmount, setRepaymentAmount] = useState('');
   const [repaymentKey, setRepaymentKey] = useState('');
   const [repaymentSubmitting, setRepaymentSubmitting] = useState(false);
@@ -1558,9 +1804,14 @@ function LoansPage({ token }: { token: string }) {
     tenureMonths: '12',
     status: 'Pending',
   });
+  const visibleLoans = loans.filter((loan) => {
+    const query = loanSearch.trim().toLocaleLowerCase();
+    return (!query || [loan.member, loan.product, loan.status].some((value) => value.toLocaleLowerCase().includes(query)))
+      && (!loanStatusFilter || loan.status === loanStatusFilter);
+  });
 
   const loadMembers = useCallback(async () => {
-    const response = await fetch(`${apiBaseUrl}/members`, {
+    const response = await apiFetch(`${apiBaseUrl}/members`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -1589,7 +1840,7 @@ function LoansPage({ token }: { token: string }) {
         setLoading(true);
         setError('');
 
-        const response = await fetch(`${apiBaseUrl}/loans/portfolio`, {
+        const response = await apiFetch(`${apiBaseUrl}/loans/portfolio`, {
           signal: abortController.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -1602,7 +1853,7 @@ function LoansPage({ token }: { token: string }) {
         }
 
         setLoans(envelope.data);
-        await loadMembers();
+        if (canCreate) await loadMembers();
       } catch (requestError) {
         if (requestError instanceof Error && requestError.name === 'AbortError') {
           return;
@@ -1616,7 +1867,7 @@ function LoansPage({ token }: { token: string }) {
 
     void loadLoans();
     return () => abortController.abort();
-  }, [loadMembers, token]);
+  }, [canCreate, loadMembers, reloadKey, token]);
 
   const resetForm = () => {
     setFormState({
@@ -1647,7 +1898,7 @@ function LoansPage({ token }: { token: string }) {
         status: formState.status,
       };
 
-      const response = await fetch(`${apiBaseUrl}/loans`, {
+      const response = await apiFetch(`${apiBaseUrl}/loans`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1674,9 +1925,12 @@ function LoansPage({ token }: { token: string }) {
   };
 
   const handleLoanTransition = async (loanId: number, transition: 'approve' | 'disburse') => {
+    const action = transition === 'approve' ? 'Approve this loan application?' : 'Disburse this approved loan?';
+    if (!window.confirm(action)) return;
     setWorkflowMessage('');
+    setTransitioningLoanId(loanId);
     try {
-      const response = await fetch(`${apiBaseUrl}/loans/${loanId}/${transition}`, {
+      const response = await apiFetch(`${apiBaseUrl}/loans/${loanId}/${transition}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -1702,14 +1956,17 @@ function LoansPage({ token }: { token: string }) {
       setWorkflowMessage(envelope.message);
     } catch (requestError) {
       setWorkflowMessage(requestError instanceof Error ? requestError.message : `Unable to ${transition} loan.`);
+    } finally {
+      setTransitioningLoanId(null);
     }
   };
 
   const handleScheduleView = async (loanId: number) => {
     setScheduleLoading(true);
+    setScheduleLoanLoadingId(loanId);
     setWorkflowMessage('');
     try {
-      const response = await fetch(`${apiBaseUrl}/loans/${loanId}/schedule`, {
+      const response = await apiFetch(`${apiBaseUrl}/loans/${loanId}/schedule`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const envelope = (await response.json()) as ApiEnvelope<LoanInstallment[]>;
@@ -1722,6 +1979,28 @@ function LoansPage({ token }: { token: string }) {
       setWorkflowMessage(requestError instanceof Error ? requestError.message : 'Unable to load repayment schedule.');
     } finally {
       setScheduleLoading(false);
+      setScheduleLoanLoadingId(null);
+    }
+  };
+
+  const handlePaymentHistory = async (loanId: number) => {
+    setPaymentsLoading(true);
+    setWorkflowMessage('');
+    setPaymentsForLoan({ loanId, entries: [] });
+    try {
+      const response = await apiFetch(`${apiBaseUrl}/loans/${loanId}/payments`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const envelope = (await response.json()) as ApiEnvelope<LoanPaymentRecord[]>;
+      if (!response.ok || !envelope.success || !envelope.data) {
+        throw new Error(envelope.message || 'Unable to load loan payment history.');
+      }
+      setPaymentsForLoan({ loanId, entries: envelope.data });
+    } catch (requestError) {
+      setPaymentsForLoan(null);
+      setWorkflowMessage(requestError instanceof Error ? requestError.message : 'Unable to load loan payment history.');
+    } finally {
+      setPaymentsLoading(false);
     }
   };
 
@@ -1731,12 +2010,16 @@ function LoansPage({ token }: { token: string }) {
       return;
     }
 
+    const selectedLoan = loans.find((loan) => loan.id === selectedLoanForPayment);
+    const formattedAmount = new Intl.NumberFormat('en-BD', { style: 'currency', currency: 'BDT' }).format(Number(repaymentAmount));
+    if (!window.confirm(`Post a repayment of ${formattedAmount} for ${selectedLoan?.member ?? `loan #${selectedLoanForPayment}`}?`)) return;
+
     setRepaymentSubmitting(true);
     setWorkflowMessage('');
     const key = repaymentKey || crypto.randomUUID();
     setRepaymentKey(key);
     try {
-      const response = await fetch(`${apiBaseUrl}/loans/${selectedLoanForPayment}/payments`, {
+      const response = await apiFetch(`${apiBaseUrl}/loans/${selectedLoanForPayment}/payments`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1761,7 +2044,7 @@ function LoansPage({ token }: { token: string }) {
       let resultMessage = envelope.message;
       if (selectedSchedule?.loanId === selectedLoanForPayment) {
         try {
-          const scheduleResponse = await fetch(`${apiBaseUrl}/loans/${selectedLoanForPayment}/schedule`, {
+          const scheduleResponse = await apiFetch(`${apiBaseUrl}/loans/${selectedLoanForPayment}/schedule`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           const scheduleEnvelope = (await scheduleResponse.json()) as ApiEnvelope<LoanInstallment[]>;
@@ -1794,24 +2077,30 @@ function LoansPage({ token }: { token: string }) {
           <h2>Loans</h2>
           <p>Review loan applications, approval pipeline, disbursement, schedules, and repayments.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setFormError('');
-            setFormSuccess('');
-            setIsFormOpen((current) => !current);
-            if (!isFormOpen) {
-              resetForm();
-            }
-          }}
-        >
-          {isFormOpen ? 'Close' : 'Create loan'}
-        </button>
+        <div className="toolbar-actions">
+          <button type="button" className="secondary-button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading}>Refresh</button>
+          <button type="button" className="secondary-button" disabled={!visibleLoans.length} onClick={() => downloadCsv(
+            'loan-portfolio.csv',
+            ['ID', 'Member', 'Product', 'Principal', 'Outstanding', 'Interest rate', 'Status'],
+            visibleLoans.map((loan) => [loan.id, loan.member, loan.product, loan.principalAmount, loan.outstanding, loan.interestRate, loan.status]),
+          )}>Export CSV</button>
+          {canCreate && <button
+            type="button"
+            onClick={() => {
+              setFormError('');
+              setFormSuccess('');
+              setIsFormOpen((current) => !current);
+              if (!isFormOpen) resetForm();
+            }}
+          >
+            {isFormOpen ? 'Close' : 'Create loan'}
+          </button>}
+        </div>
       </div>
 
-      {workflowMessage && <div className="empty-state">{workflowMessage}</div>}
+      {workflowMessage && <div className="empty-state" role="status">{workflowMessage}</div>}
 
-      {isFormOpen && (
+      {isFormOpen && canCreate && (
         <form className="loan-form" onSubmit={handleCreateLoan}>
           <div className="loan-form-grid">
             <label>
@@ -1824,7 +2113,7 @@ function LoansPage({ token }: { token: string }) {
             </label>
             <label>
               Product name
-              <input type="text" value={formState.productName} onChange={(event) => setFormState((current) => ({ ...current, productName: event.target.value }))} required />
+              <input type="text" minLength={2} maxLength={120} value={formState.productName} onChange={(event) => setFormState((current) => ({ ...current, productName: event.target.value }))} required />
             </label>
             <label>
               Principal amount
@@ -1836,23 +2125,33 @@ function LoansPage({ token }: { token: string }) {
             </label>
             <label>
               Tenure (months)
-              <input type="number" min="1" step="1" value={formState.tenureMonths} onChange={(event) => setFormState((current) => ({ ...current, tenureMonths: event.target.value }))} required />
-            </label>
-            <label>
-              Status
-              <select value={formState.status} onChange={(event) => setFormState((current) => ({ ...current, status: event.target.value }))}>
-                <option value="Pending">Pending</option>
-              </select>
+              <input type="number" min="1" max="600" step="1" value={formState.tenureMonths} onChange={(event) => setFormState((current) => ({ ...current, tenureMonths: event.target.value }))} required />
             </label>
           </div>
 
+          {members.length === 0 && <p className="form-hint">Create a member before applying for a loan.</p>}
           {formError && <div className="empty-state error-state">{formError}</div>}
           {formSuccess && <div className="empty-state success-state">{formSuccess}</div>}
 
           <div className="form-actions">
-            <button type="submit" disabled={submitting}>{submitting ? 'Saving…' : 'Save loan'}</button>
+            <button type="submit" disabled={submitting || !formState.memberId || members.length === 0}>{submitting ? 'Saving…' : 'Save loan'}</button>
           </div>
         </form>
+      )}
+
+      {!loading && !error && loans.length > 0 && (
+        <div className="list-filters">
+          <label>Search loans
+            <input type="search" value={loanSearch} onChange={(event) => setLoanSearch(event.target.value)} placeholder="Member, product, or status" />
+          </label>
+          <label>Status
+            <select value={loanStatusFilter} onChange={(event) => setLoanStatusFilter(event.target.value)}>
+              <option value="">All statuses</option>
+              {[...new Set(loans.map((loan) => loan.status))].sort().map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
+          </label>
+          <span className="filter-count">{visibleLoans.length} of {loans.length} loans</span>
+        </div>
       )}
 
       {loading ? (
@@ -1861,8 +2160,10 @@ function LoansPage({ token }: { token: string }) {
         <div className="empty-state error-state">{error}</div>
       ) : loans.length === 0 ? (
         <div className="empty-state">No loan records found.</div>
+      ) : visibleLoans.length === 0 ? (
+        <div className="empty-state">No loans match these filters.</div>
       ) : (
-        <table className="member-table">
+        <div className="table-wrap"><table className="member-table">
           <thead>
             <tr>
               <th>Member</th>
@@ -1875,7 +2176,7 @@ function LoansPage({ token }: { token: string }) {
             </tr>
           </thead>
           <tbody>
-            {loans.map((loan) => (
+            {visibleLoans.map((loan) => (
               <tr key={loan.id}>
                 <td>{loan.member}</td>
                 <td>{loan.product}</td>
@@ -1896,34 +2197,41 @@ function LoansPage({ token }: { token: string }) {
                   </span>
                 </td>
                 <td>
-                  {loan.status === 'Pending' && (
-                    <button type="button" onClick={() => void handleLoanTransition(loan.id, 'approve')}>Approve</button>
-                  )}
-                  {loan.status === 'Approved' && (
-                    <button type="button" onClick={() => void handleLoanTransition(loan.id, 'disburse')}>Disburse</button>
-                  )}
-                  {(loan.status === 'Disbursed' || loan.status === 'Overdue') && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedLoanForPayment(loan.id);
-                        setRepaymentAmount('');
-                        setRepaymentKey('');
-                      }}
-                    >
-                      Record payment
+                  <div className="row-actions">
+                    {loan.status === 'Pending' && canApprove && (
+                      <button type="button" disabled={transitioningLoanId === loan.id} onClick={() => void handleLoanTransition(loan.id, 'approve')}>
+                        {transitioningLoanId === loan.id ? 'Approving…' : 'Approve'}
+                      </button>
+                    )}
+                    {loan.status === 'Approved' && canDisburse && (
+                      <button type="button" disabled={transitioningLoanId === loan.id} onClick={() => void handleLoanTransition(loan.id, 'disburse')}>
+                        {transitioningLoanId === loan.id ? 'Disbursing…' : 'Disburse'}
+                      </button>
+                    )}
+                    {(loan.status === 'Disbursed' || loan.status === 'Overdue') && loan.outstanding > 0 && canRepay && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedLoanForPayment(loan.id);
+                          setRepaymentAmount('');
+                          setRepaymentKey('');
+                        }}
+                      >
+                        Record payment
+                      </button>
+                    )}
+                    <button type="button" disabled={scheduleLoading} onClick={() => void handleScheduleView(loan.id)}>
+                      {scheduleLoanLoadingId === loan.id ? 'Loading…' : 'Schedule'}
                     </button>
-                  )}
-                  <button type="button" disabled={scheduleLoading} onClick={() => void handleScheduleView(loan.id)}>
-                    {scheduleLoading && selectedSchedule?.loanId === loan.id ? 'Loading…' : 'Schedule'}
-                  </button>
+                    <button type="button" className="secondary-button" disabled={paymentsLoading} onClick={() => void handlePaymentHistory(loan.id)}>Payments</button>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
-      {selectedLoanForPayment !== null && (
+      {selectedLoanForPayment !== null && canRepay && (
         <form className="loan-form" onSubmit={handleRepayment}>
           <div className="panel-header">
             <h3>Record repayment — loan #{selectedLoanForPayment}</h3>
@@ -1944,8 +2252,9 @@ function LoansPage({ token }: { token: string }) {
               required
             />
           </label>
+          {workflowMessage && <div className="empty-state error-state" role="alert">{workflowMessage}</div>}
           <div className="form-actions">
-            <button type="submit" disabled={repaymentSubmitting}>
+            <button type="submit" disabled={repaymentSubmitting || !repaymentAmount || Number(repaymentAmount) <= 0}>
               {repaymentSubmitting ? 'Posting…' : 'Post repayment'}
             </button>
           </div>
@@ -1979,6 +2288,27 @@ function LoansPage({ token }: { token: string }) {
           )}
         </section>
       )}
+      {paymentsForLoan && (
+        <section className="panel">
+          <div className="panel-header">
+            <h3>Payment history — loan #{paymentsForLoan.loanId}</h3>
+            <button type="button" className="secondary-button" onClick={() => setPaymentsForLoan(null)}>Close</button>
+          </div>
+          {paymentsLoading ? <div className="empty-state" role="status">Loading payment history…</div>
+            : paymentsForLoan.entries.length === 0 ? <div className="empty-state">No repayments recorded.</div>
+              : <div className="table-wrap"><table className="member-table">
+                <thead><tr><th>Date</th><th>Amount</th><th>Principal</th><th>Interest</th></tr></thead>
+                <tbody>{paymentsForLoan.entries.map((payment) => (
+                  <tr key={payment.id}>
+                    <td>{new Date(payment.createdAt).toLocaleString()}</td>
+                    <td>{payment.amount.toLocaleString('en-BD', { minimumFractionDigits: 2 })}</td>
+                    <td>{payment.principalAmount.toLocaleString('en-BD', { minimumFractionDigits: 2 })}</td>
+                    <td>{payment.interestAmount.toLocaleString('en-BD', { minimumFractionDigits: 2 })}</td>
+                  </tr>
+                ))}</tbody>
+              </table></div>}
+        </section>
+      )}
     </div>
   );
 }
@@ -1996,7 +2326,7 @@ function CollectionsPage({ token }: { token: string }) {
         setLoading(true);
         setError('');
 
-        const response = await fetch(`${apiBaseUrl}/collections/sheets`, {
+        const response = await apiFetch(`${apiBaseUrl}/collections/sheets`, {
           signal: abortController.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -2029,9 +2359,14 @@ function CollectionsPage({ token }: { token: string }) {
       <div className="page-toolbar">
         <div>
           <h2>Collections</h2>
-          <p>Process collection sheets, reconcile cash, and post payments to the ledger.</p>
+          <p>Preview only — collection sheets are not persisted by the API.</p>
         </div>
-        <button type="button">New sheet</button>
+        <button type="button" disabled title="Collection sheet creation is not available yet">New sheet</button>
+      </div>
+
+      <div className="feature-callout" role="status">
+        <strong>Example data only — not live collections</strong>
+        <p>The API currently returns sample collection sheets. Creating sheets, posting payments, and reconciliation are not implemented.</p>
       </div>
 
       {loading ? (
@@ -2086,6 +2421,7 @@ function AccountingPage({ token }: { token: string }) {
   const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -2095,7 +2431,7 @@ function AccountingPage({ token }: { token: string }) {
         setLoading(true);
         setError('');
 
-        const response = await fetch(`${apiBaseUrl}/accounting/trial-balance`, {
+        const response = await apiFetch(`${apiBaseUrl}/accounting/trial-balance`, {
           signal: abortController.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -2121,18 +2457,28 @@ function AccountingPage({ token }: { token: string }) {
 
     void loadTrialBalance();
     return () => abortController.abort();
-  }, [token]);
+  }, [reloadKey, token]);
 
   return (
     <div className="page-card panel">
       <div className="page-toolbar">
         <div>
           <h2>Accounting</h2>
-          <p>Review the live trial balance, ledger movements, and reconciliation status.</p>
+          <p>Review the current trial balance and reconciliation status.</p>
         </div>
-        <button type="button" disabled title="Manual journal entry is not available yet">
-          Post entry
-        </button>
+        <div className="toolbar-actions">
+          <button type="button" className="secondary-button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading}>Refresh</button>
+          <button type="button" disabled={!trialBalance?.accounts.length} onClick={() => downloadCsv(
+            'trial-balance.csv',
+            ['Code', 'Account', 'Type', 'Debit', 'Credit'],
+            (trialBalance?.accounts ?? []).map((entry) => [entry.code, entry.account, entry.accountType, entry.debit, entry.credit]),
+          )}>Export CSV</button>
+        </div>
+      </div>
+
+      <div className="feature-callout" role="note">
+        <strong>Read-only accounting</strong>
+        <p>Manual journal entry and ledger editing are not implemented. This view only displays the backend trial balance.</p>
       </div>
 
       {loading ? (
@@ -2208,7 +2554,7 @@ function ReportsPage({ token }: { token: string }) {
         setLoading(true);
         setError('');
 
-        const response = await fetch(`${apiBaseUrl}/reports/financial`, {
+        const response = await apiFetch(`${apiBaseUrl}/reports/financial`, {
           signal: abortController.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -2241,9 +2587,14 @@ function ReportsPage({ token }: { token: string }) {
       <div className="page-toolbar">
         <div>
           <h2>Reports</h2>
-          <p>Generate portfolio, financial, and collection reports in Excel and PDF.</p>
+          <p>Report catalog preview.</p>
         </div>
-        <button type="button">Generate</button>
+        <button type="button" disabled title="Report generation and file export are not implemented">Generate</button>
+      </div>
+
+      <div className="feature-callout" role="status">
+        <strong>Sample catalog only — report generation is unavailable</strong>
+        <p>The current API returns example report names and dates; it does not query live records or generate Excel/PDF files.</p>
       </div>
 
       {loading ? (
@@ -2280,6 +2631,7 @@ function AuditPage({ token }: { token: string }) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -2289,7 +2641,7 @@ function AuditPage({ token }: { token: string }) {
         setLoading(true);
         setError('');
 
-        const response = await fetch(`${apiBaseUrl}/audit/logs`, {
+        const response = await apiFetch(`${apiBaseUrl}/audit/logs`, {
           signal: abortController.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -2315,16 +2667,23 @@ function AuditPage({ token }: { token: string }) {
 
     void loadAuditEntries();
     return () => abortController.abort();
-  }, [token]);
+  }, [reloadKey, token]);
 
   return (
     <div className="page-card panel">
       <div className="page-toolbar">
         <div>
           <h2>Audit</h2>
-          <p>Review user activity logs, approval history, and compliance outputs.</p>
+          <p>Review recorded user activity and workflow outcomes.</p>
         </div>
-        <button type="button">Export log</button>
+        <div className="toolbar-actions">
+          <button type="button" className="secondary-button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading}>Refresh</button>
+          <button type="button" disabled={!entries.length} onClick={() => downloadCsv(
+            'audit-log.csv',
+            ['Actor', 'Action', 'Module', 'Outcome', 'Time'],
+            entries.map((entry) => [entry.actor, entry.action, entry.module, entry.outcome, entry.time]),
+          )}>Export CSV</button>
+        </div>
       </div>
 
       {loading ? (
@@ -2378,7 +2737,7 @@ function SettingsPage({ token, onLogout }: { token: string; onLogout: () => void
         setLoading(true);
         setError('');
 
-        const response = await fetch(`${apiBaseUrl}/settings/system`, {
+        const response = await apiFetch(`${apiBaseUrl}/settings/system`, {
           signal: abortController.signal,
           headers: {
             Authorization: `Bearer ${token}`,
@@ -2418,7 +2777,7 @@ function SettingsPage({ token, onLogout }: { token: string; onLogout: () => void
 
     setPasswordSubmitting(true);
     try {
-      const response = await fetch(`${apiBaseUrl}/auth/change-password`, {
+      const response = await apiFetch(`${apiBaseUrl}/auth/change-password`, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -2450,9 +2809,14 @@ function SettingsPage({ token, onLogout }: { token: string; onLogout: () => void
       <div className="page-toolbar">
         <div>
           <h2>Settings</h2>
-          <p>Adjust system preferences, role access, branch rules, and finance configuration.</p>
+          <p>View system defaults and change your password.</p>
         </div>
-        <button type="button">Save changes</button>
+        <span className="read-only-label">System defaults are read-only</span>
+      </div>
+
+      <div className="feature-callout" role="status">
+        <strong>System configuration updates are not available</strong>
+        <p>The values below are informational defaults. Use Security administration to manage roles and permissions.</p>
       </div>
 
       {loading ? (

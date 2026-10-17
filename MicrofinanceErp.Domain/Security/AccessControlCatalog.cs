@@ -14,6 +14,7 @@ public static class AccessControlCatalog
     public const string BranchesRead = "Branches.Read";
     public const string MembersRead = "Members.Read";
     public const string MembersCreate = "Members.Create";
+    public const string MembersUpdate = "Members.Update";
     public const string SavingsRead = "Savings.Read";
     public const string SavingsCreateAccount = "Savings.CreateAccount";
     public const string SavingsTransact = "Savings.Transact";
@@ -36,6 +37,7 @@ public static class AccessControlCatalog
         new() { Code = BranchesRead, Module = "Branches", Description = "View permitted branches." },
         new() { Code = MembersRead, Module = "Members", Description = "View members." },
         new() { Code = MembersCreate, Module = "Members", Description = "Create members." },
+        new() { Code = MembersUpdate, Module = "Members", Description = "Edit member details and status." },
         new() { Code = SavingsRead, Module = "Savings", Description = "View savings accounts and transactions." },
         new() { Code = SavingsCreateAccount, Module = "Savings", Description = "Open savings accounts." },
         new() { Code = SavingsTransact, Module = "Savings", Description = "Post savings deposits and withdrawals." },
@@ -79,7 +81,7 @@ public static class AccessControlCatalog
         var all = Permissions.Select(permission => permission.Code).ToArray();
         var branchManager = new[]
         {
-            DashboardRead, BranchesRead, MembersRead, MembersCreate, SavingsRead, SavingsCreateAccount,
+            DashboardRead, BranchesRead, MembersRead, MembersCreate, MembersUpdate, SavingsRead, SavingsCreateAccount,
             SavingsTransact, LoansRead, LoansCreate, LoansApprove, LoansDisburse, LoansRepay,
             CollectionsRead, AccountingRead, ReportsRead, AuditRead, SettingsRead
         };
@@ -95,7 +97,7 @@ public static class AccessControlCatalog
         };
         var fieldOfficer = new[]
         {
-            DashboardRead, BranchesRead, MembersRead, MembersCreate, SavingsRead, SavingsCreateAccount,
+            DashboardRead, BranchesRead, MembersRead, MembersCreate, MembersUpdate, SavingsRead, SavingsCreateAccount,
             LoansRead, LoansCreate, CollectionsRead, ReportsRead
         };
 

@@ -37,4 +37,19 @@ public class AccessControlCatalogTests
         grantedCodes.Should().NotContain(AccessControlCatalog.LoansApprove);
         grantedCodes.Should().NotContain(AccessControlCatalog.LoansRepay);
     }
+
+    [Fact]
+    public void MemberCreators_ShouldAlsoHaveMemberUpdatePermission()
+    {
+        var creatorRoles = AccessControlCatalog.RolePermissions
+            .Where(permission => permission.PermissionCode == AccessControlCatalog.MembersCreate)
+            .Select(permission => permission.AccessRoleName)
+            .ToHashSet();
+        var updaterRoles = AccessControlCatalog.RolePermissions
+            .Where(permission => permission.PermissionCode == AccessControlCatalog.MembersUpdate)
+            .Select(permission => permission.AccessRoleName)
+            .ToHashSet();
+
+        updaterRoles.Should().BeEquivalentTo(creatorRoles);
+    }
 }

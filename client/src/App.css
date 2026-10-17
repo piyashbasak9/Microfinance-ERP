@@ -667,6 +667,89 @@
   font-size: 14px;
 }
 
+.list-filters {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.list-filters label {
+  display: flex;
+  flex: 1 1 180px;
+  flex-direction: column;
+  gap: 6px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.list-filters input,
+.list-filters select {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #d7dfef;
+  border-radius: 8px;
+  background: #fff;
+  color: #1a2433;
+}
+
+.filter-count {
+  padding: 10px 0;
+  color: #586779;
+  font-size: 13px;
+}
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.feature-callout {
+  margin: 14px 0 18px;
+  padding: 16px 18px;
+  border: 1px solid #f0d58a;
+  border-left: 4px solid #c48a12;
+  border-radius: 10px;
+  background: #fffbeb;
+  color: #713f12;
+}
+
+.feature-callout strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.feature-callout p {
+  margin: 0;
+}
+
+.read-only-label,
+.form-hint {
+  color: #586779;
+  font-size: 13px;
+}
+
+.dashboard-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.panel button:disabled,
+.logout-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid #6ea8fe;
+  outline-offset: 2px;
+}
+
 .password-change-form .empty-state,
 .password-change-form .form-actions {
   grid-column: 1 / -1;
@@ -681,6 +764,13 @@
   .sidebar {
     width: 100%;
     padding-bottom: 8px;
+  }
+
+  .menu {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    max-height: 180px;
+    overflow-y: auto;
   }
 
   .stats-grid,
@@ -701,5 +791,41 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
+  }
+
+  .content-shell {
+    min-width: 0;
+    padding: 16px;
+  }
+
+  .page-toolbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .table-wrap table,
+  .page-card > table {
+    min-width: 680px;
+  }
+}
+
+@media (max-width: 520px) {
+  .content-shell {
+    padding: 12px;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  .topbar h1 {
+    font-size: 22px;
+  }
+
+  .user-panel {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
   }
 }
