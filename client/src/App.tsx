@@ -159,6 +159,29 @@ type TrialBalance = {
   isBalanced: boolean;
 };
 
+type FinancialReportResult = {
+  reportCode: 'trial-balance' | 'income-statement';
+  name: string;
+  fromDate: string | null;
+  toDate: string;
+  branchId: number | null;
+  accounts: Array<{
+    id: number;
+    code: string;
+    account: string;
+    accountType: string;
+    debit: number;
+    credit: number;
+    balance?: number;
+  }>;
+  totalDebits?: number;
+  totalCredits?: number;
+  isBalanced?: boolean;
+  totalIncome?: number;
+  totalExpenses?: number;
+  netIncome?: number;
+};
+
 type LoanPortfolioItem = {
   id: number;
   member: string;
@@ -346,7 +369,7 @@ function App() {
         <Routes>
           <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <LoginPage onLogin={(nextSession) => { setAuthError(''); setSession(nextSession); }} initialError={authError} />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
-          <Route path="/branches" element={renderProtectedPage('Branches.Read', <BranchesPage token={session?.token ?? ''} />)} />
+          <Route path="/branches" element={renderProtectedPage('Branches.Read', <BranchesPage token={session?.token ?? ''} canManage={session?.permissions.includes('Branches.Manage') ?? false} />)} />
           <Route path="/dashboard" element={renderProtectedPage('Dashboard.Read', <DashboardPage token={session?.token ?? ''} />)} />
           <Route path="/members" element={renderProtectedPage('Members.Read', <MembersPage
             token={session?.token ?? ''}
@@ -1049,11 +1072,28 @@ function DashboardPage({ token }: { token: string }) {
   );
 }
 
-function BranchesPage({ token }: { token: string }) {
+function BranchesPage({ token, canManage }: { token: string; canManage: boolean }) {
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [formSuccess, setFormSuccess] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingBranchId, setEditingBranchId] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [formState, setFormState] = useState({
+    name: '',
+    code: '',
+    address: '',
+    isActive: true,
+  });
+
+  const resetForm = () => {
+    setEditingBranchId(null);
+    setFormState({ name: '', code: '', address: '', isActive: true });
+    setFormError('');
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1061,7 +1101,7 @@ function BranchesPage({ token }: { token: string }) {
       setLoading(true);
       setError('');
       try {
-        const response = await apiFetch(`${apiBaseUrl}/branches`, {
+        const response = await apiFetch(`${apiBaseUrl}/branches${canManage ? '?includeInactive=true' : ''}`, {
           signal: controller.signal,
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -1079,27 +1119,117 @@ function BranchesPage({ token }: { token: string }) {
     };
     void loadBranches();
     return () => controller.abort();
-  }, [reloadKey, token]);
+  }, [canManage, reloadKey, token]);
+
+  const handleSaveBranch = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setFormError('');
+    setFormSuccess('');
+    try {
+      const response = await apiFetch(
+        `${apiBaseUrl}/branches${editingBranchId === null ? '' : `/${editingBranchId}`}`,
+        {
+          method: editingBranchId === null ? 'POST' : 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(formState),
+        },
+      );
+      const envelope = (await response.json()) as ApiEnvelope<BranchOption>;
+      if (!response.ok || !envelope.success) {
+        throw new Error(envelope.message || 'Unable to save branch.');
+      }
+
+      setFormSuccess(envelope.message);
+      resetForm();
+      setIsFormOpen(false);
+      setReloadKey((key) => key + 1);
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : 'Unable to save branch.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const editBranch = (branch: BranchOption) => {
+    setEditingBranchId(branch.id);
+    setFormState({
+      name: branch.name,
+      code: branch.code,
+      address: branch.address ?? '',
+      isActive: branch.isActive,
+    });
+    setFormError('');
+    setFormSuccess('');
+    setIsFormOpen(true);
+  };
 
   return (
     <div className="page-card panel">
       <div className="page-toolbar">
-        <div><h2>Branches</h2><p>View branches available to your account.</p></div>
-        <button type="button" className="secondary-button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading}>Refresh</button>
+        <div><h2>Branches</h2><p>View and manage the organization's branches.</p></div>
+        <div className="toolbar-actions">
+          <button type="button" className="secondary-button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading}>Refresh</button>
+          {canManage && <button type="button" onClick={() => {
+            if (isFormOpen) {
+              resetForm();
+              setIsFormOpen(false);
+            } else {
+              resetForm();
+              setFormSuccess('');
+              setIsFormOpen(true);
+            }
+          }}>{isFormOpen ? 'Cancel' : 'Create branch'}</button>}
+        </div>
       </div>
+      {formSuccess && <div className="empty-state success-state" role="status">{formSuccess}</div>}
+      {isFormOpen && canManage && (
+        <form className="member-form" onSubmit={handleSaveBranch}>
+          <div className="member-form-grid">
+            <label>
+              Branch name
+              <input type="text" minLength={2} maxLength={200} value={formState.name} onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))} required />
+            </label>
+            <label>
+              Branch code
+              <input type="text" minLength={2} maxLength={50} pattern="[A-Za-z0-9_-]+" value={formState.code} onChange={(event) => setFormState((current) => ({ ...current, code: event.target.value }))} required />
+            </label>
+            <label>
+              Address
+              <input type="text" maxLength={300} value={formState.address} onChange={(event) => setFormState((current) => ({ ...current, address: event.target.value }))} />
+            </label>
+            <label>
+              Status
+              <select value={formState.isActive ? 'active' : 'inactive'} onChange={(event) => setFormState((current) => ({ ...current, isActive: event.target.value === 'active' }))}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+          </div>
+          {formError && <div className="empty-state error-state" role="alert">{formError}</div>}
+          <div className="form-actions">
+            <button type="button" className="secondary-button" onClick={() => { resetForm(); setIsFormOpen(false); }} disabled={submitting}>Cancel</button>
+            <button type="submit" disabled={submitting}>{submitting ? 'Saving…' : editingBranchId === null ? 'Create branch' : 'Save changes'}</button>
+          </div>
+        </form>
+      )}
       {loading ? <div className="empty-state" role="status">Loading branches…</div>
         : error ? <div className="empty-state error-state" role="alert">{error}</div>
           : branches.length === 0 ? <div className="empty-state">No branches are available.</div>
             : (
               <div className="table-wrap">
                 <table className="member-table">
-                  <thead><tr><th>Branch</th><th>Code</th><th>Address</th><th>Status</th></tr></thead>
+                  <thead><tr><th>Branch</th><th>Code</th><th>Address</th><th>Status</th>{canManage && <th>Actions</th>}</tr></thead>
                   <tbody>{branches.map((branch) => (
                     <tr key={branch.id}>
                       <td>{branch.name}</td>
                       <td>{branch.code}</td>
                       <td>{branch.address || '—'}</td>
                       <td><span className={`status-tag ${branch.isActive ? 'active' : 'inactive'}`}>{branch.isActive ? 'Active' : 'Inactive'}</span></td>
+                      {canManage && <td><button type="button" className="secondary-button" onClick={() => editBranch(branch)}>Edit</button></td>}
                     </tr>
                   ))}</tbody>
                 </table>
@@ -2542,9 +2672,20 @@ function AccountingPage({ token }: { token: string }) {
 }
 
 function ReportsPage({ token }: { token: string }) {
-  const [reports, setReports] = useState<{ name: string; category: string; lastRun: string }[]>([]);
+  const [reports, setReports] = useState<{ code: FinancialReportResult['reportCode']; name: string; category: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reportCode, setReportCode] = useState<FinancialReportResult['reportCode']>('trial-balance');
+  const [fromDate, setFromDate] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [toDate, setToDate] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  });
+  const [result, setResult] = useState<FinancialReportResult | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -2561,7 +2702,7 @@ function ReportsPage({ token }: { token: string }) {
           },
         });
 
-        const envelope = (await response.json()) as ApiEnvelope<{ name: string; category: string; lastRun: string }[]>;
+        const envelope = (await response.json()) as ApiEnvelope<{ code: FinancialReportResult['reportCode']; name: string; category: string }[]>;
         if (!response.ok || !envelope.success || !envelope.data) {
           throw new Error(envelope.message || 'Unable to load reports.');
         }
@@ -2582,47 +2723,146 @@ function ReportsPage({ token }: { token: string }) {
     return () => abortController.abort();
   }, [token]);
 
+  const handleRunReport = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setError('');
+    try {
+      const response = await apiFetch(`${apiBaseUrl}/reports/financial/run`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reportCode,
+          fromDate: reportCode === 'income-statement' ? fromDate : null,
+          toDate,
+        }),
+      });
+      const envelope = (await response.json()) as ApiEnvelope<FinancialReportResult>;
+      if (!response.ok || !envelope.success || !envelope.data) {
+        throw new Error(envelope.message || 'Unable to generate report.');
+      }
+      setResult(envelope.data);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to generate report.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="page-card panel">
       <div className="page-toolbar">
         <div>
           <h2>Reports</h2>
-          <p>Report catalog preview.</p>
+          <p>Generate live reports from the journal data available to your account.</p>
         </div>
-        <button type="button" disabled title="Report generation and file export are not implemented">Generate</button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={!result?.accounts.length}
+          onClick={() => downloadCsv(
+            `${result?.reportCode ?? 'financial-report'}.csv`,
+            ['Code', 'Account', 'Type', 'Debit', 'Credit', ...(result?.reportCode === 'income-statement' ? ['Balance'] : [])],
+            (result?.accounts ?? []).map((account) => [
+              account.code,
+              account.account,
+              account.accountType,
+              account.debit,
+              account.credit,
+              ...(result?.reportCode === 'income-statement' ? [account.balance ?? 0] : []),
+            ]),
+          )}
+        >Export CSV</button>
       </div>
 
-      <div className="feature-callout" role="status">
-        <strong>Sample catalog only — report generation is unavailable</strong>
-        <p>The current API returns example report names and dates; it does not query live records or generate Excel/PDF files.</p>
-      </div>
+      <form className="member-form" onSubmit={handleRunReport}>
+        <div className="member-form-grid">
+          <label>
+            Financial report
+            <select value={reportCode} onChange={(event) => setReportCode(event.target.value as FinancialReportResult['reportCode'])}>
+              {reports.map((report) => <option key={report.code} value={report.code}>{report.name}</option>)}
+            </select>
+          </label>
+          {reportCode === 'income-statement' && (
+            <label>
+              From
+              <input type="date" value={fromDate} max={toDate} onChange={(event) => setFromDate(event.target.value)} required />
+            </label>
+          )}
+          <label>
+            {reportCode === 'trial-balance' ? 'As of date' : 'Through'}
+            <input type="date" value={toDate} min={reportCode === 'income-statement' ? fromDate : undefined} required onChange={(event) => setToDate(event.target.value)} />
+          </label>
+        </div>
+        {error && <div className="empty-state error-state" role="alert">{error}</div>}
+        <div className="form-actions">
+          <button type="submit" disabled={submitting || loading || reports.length === 0}>
+            {submitting ? 'Generating…' : 'Generate report'}
+          </button>
+        </div>
+      </form>
 
       {loading ? (
         <div className="empty-state">Loading reports…</div>
-      ) : error ? (
-        <div className="empty-state error-state">{error}</div>
       ) : reports.length === 0 ? (
         <div className="empty-state">No reports available.</div>
-      ) : (
-        <table className="member-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Category</th>
-              <th>Last run</th>
-            </tr>
-          </thead>
-          <tbody>
-            {reports.map((report) => (
-              <tr key={report.name}>
-                <td>{report.name}</td>
-                <td>{report.category}</td>
-                <td>{new Date(report.lastRun).toLocaleDateString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      ) : null}
+
+      {result && (
+        <section>
+          <div className="panel-header">
+            <div>
+              <h3>{result.name}</h3>
+              <p>{result.reportCode === 'trial-balance'
+                ? `As of ${new Date(`${result.toDate}T00:00:00`).toLocaleDateString()}`
+                : `${new Date(`${result.fromDate}T00:00:00`).toLocaleDateString()} – ${new Date(`${result.toDate}T00:00:00`).toLocaleDateString()}`}
+                {' · '}{result.branchId === null ? 'All branches' : `Branch #${result.branchId}`}</p>
+            </div>
+          </div>
+          {result.reportCode === 'trial-balance' && (
+            <p className={result.isBalanced ? 'success-state' : 'error-state'}>
+              {result.isBalanced ? 'Debits and credits are balanced.' : 'Trial balance is out of balance.'}
+              {' '}Debits: {(result.totalDebits ?? 0).toLocaleString('en-BD', { style: 'currency', currency: 'BDT' })}
+              {' · '}Credits: {(result.totalCredits ?? 0).toLocaleString('en-BD', { style: 'currency', currency: 'BDT' })}
+            </p>
+          )}
+          {result.reportCode === 'income-statement' && (
+            <p className="success-state">
+              Income: {(result.totalIncome ?? 0).toLocaleString('en-BD', { style: 'currency', currency: 'BDT' })}
+              {' · '}Expenses: {(result.totalExpenses ?? 0).toLocaleString('en-BD', { style: 'currency', currency: 'BDT' })}
+              {' · '}Net income: {(result.netIncome ?? 0).toLocaleString('en-BD', { style: 'currency', currency: 'BDT' })}
+            </p>
+          )}
+          <div className="table-wrap">
+            <table className="member-table">
+              <thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Debit</th><th>Credit</th>{result.reportCode === 'income-statement' && <th>Balance</th>}</tr></thead>
+              <tbody>
+                {result.accounts.map((account) => (
+                  <tr key={account.id}>
+                    <td>{account.code}</td>
+                    <td>{account.account}</td>
+                    <td>{account.accountType}</td>
+                    <td>{account.debit.toLocaleString('en-BD', { style: 'currency', currency: 'BDT' })}</td>
+                    <td>{account.credit.toLocaleString('en-BD', { style: 'currency', currency: 'BDT' })}</td>
+                    {result.reportCode === 'income-statement' && <td>{(account.balance ?? 0).toLocaleString('en-BD', { style: 'currency', currency: 'BDT' })}</td>}
+                  </tr>
+                ))}
+                {result.accounts.length === 0 && <tr><td colSpan={result.reportCode === 'income-statement' ? 6 : 5}>No posted journal activity found for this report.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {result.reportCode === 'income-statement' && result.accounts.every((account) => account.accountType !== 'Expense') && (
+            <div className="feature-callout" role="note">
+              <strong>No posted expense activity found for this period</strong>
+              <p>This result includes posted income activity only. Confirm expense accounts and postings are configured before treating net income as complete.</p>
+            </div>
+          )}
+        </section>
       )}
+
     </div>
   );
 }

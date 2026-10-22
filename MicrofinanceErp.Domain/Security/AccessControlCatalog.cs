@@ -12,6 +12,7 @@ public static class AccessControlCatalog
 
     public const string DashboardRead = "Dashboard.Read";
     public const string BranchesRead = "Branches.Read";
+    public const string BranchesManage = "Branches.Manage";
     public const string MembersRead = "Members.Read";
     public const string MembersCreate = "Members.Create";
     public const string MembersUpdate = "Members.Update";
@@ -35,6 +36,7 @@ public static class AccessControlCatalog
     [
         new() { Code = DashboardRead, Module = "Dashboard", Description = "View the dashboard." },
         new() { Code = BranchesRead, Module = "Branches", Description = "View permitted branches." },
+        new() { Code = BranchesManage, Module = "Branches", Description = "Create and edit branches." },
         new() { Code = MembersRead, Module = "Members", Description = "View members." },
         new() { Code = MembersCreate, Module = "Members", Description = "Create members." },
         new() { Code = MembersUpdate, Module = "Members", Description = "Edit member details and status." },

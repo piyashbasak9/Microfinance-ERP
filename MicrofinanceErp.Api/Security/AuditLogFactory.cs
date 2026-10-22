@@ -7,7 +7,7 @@ public static class AuditLogFactory
 {
     public static AuditLog Create(
         ClaimsPrincipal user,
-        int branchId,
+        int? branchId,
         string action,
         string entityType,
         string entityId,

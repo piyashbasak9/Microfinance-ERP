@@ -613,6 +613,12 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         },
                         new
                         {
+                            Code = "Branches.Manage",
+                            Description = "Create and edit branches.",
+                            Module = "Branches"
+                        },
+                        new
+                        {
                             Code = "Members.Read",
                             Description = "View members.",
                             Module = "Members"
@@ -621,6 +627,12 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         {
                             Code = "Members.Create",
                             Description = "Create members.",
+                            Module = "Members"
+                        },
+                        new
+                        {
+                            Code = "Members.Update",
+                            Description = "Edit member details and status.",
                             Module = "Members"
                         },
                         new
@@ -787,12 +799,22 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         new
                         {
                             AccessRoleName = "Super Admin",
+                            PermissionCode = "Branches.Manage"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
                             PermissionCode = "Members.Read"
                         },
                         new
                         {
                             AccessRoleName = "Super Admin",
                             PermissionCode = "Members.Create"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Super Admin",
+                            PermissionCode = "Members.Update"
                         },
                         new
                         {
@@ -892,6 +914,11 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         new
                         {
                             AccessRoleName = "Branch Manager",
+                            PermissionCode = "Members.Update"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Branch Manager",
                             PermissionCode = "Savings.Read"
                         },
                         new
@@ -1058,6 +1085,11 @@ namespace MicrofinanceErp.Infrastructure.Migrations
                         {
                             AccessRoleName = "Field Officer",
                             PermissionCode = "Members.Create"
+                        },
+                        new
+                        {
+                            AccessRoleName = "Field Officer",
+                            PermissionCode = "Members.Update"
                         },
                         new
                         {
